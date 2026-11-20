@@ -47,6 +47,7 @@ class EpubSelectionTest {
         var worstWord = ""
         for (page in 0 until minOf(3, content.pageCount)) {
             Canvas(bmp).also { content.drawPage(page, it, emptyList()) }
+            if (System.getenv("PAPYRUS_DEBUG_DIR") != null) println("PÁGINA ${page + 1}\n" + content.debugJustify(page))
             val debug = bmp.copy(Bitmap.Config.ARGB_8888, true)
             val dc = Canvas(debug)
             val stroke = android.graphics.Paint().apply { style = android.graphics.Paint.Style.STROKE; color = Color.RED; strokeWidth = 2f }
