@@ -474,7 +474,8 @@ class EpubContent(private val dir: File) : BookContent {
 
     /** Espaço extra por espaço comum numa linha justificada (0 se a linha não é esticada). */
     private fun justifyExtra(layout: Layout, line: Int): Float {
-        if (layout.justificationMode == Layout.JUSTIFICATION_MODE_NONE) return 0f
+        // (Layout.getJustificationMode não existe em todas as versões do Android: usa a configuração)
+        if (settings?.justify != true) return 0f
         val start = layout.getLineStart(line)
         val lineEnd = layout.getLineEnd(line)
         val text = layout.text
