@@ -36,7 +36,7 @@ jobs:
       - name: Testes (extração de texto dos PDFs)
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon testReleaseUnitTest -PbuildNumber=${{ github.run_number }} --info 2>&1 | grep -E "^e: |error:|PdfImporterTest|página 1|Exception|at dev\.|at com\.tom|Caused|FAILED|PASSED|tests completed" | head -200
+          ./gradlew --no-daemon testReleaseUnitTest -PbuildNumber=${{ github.run_number }} -i 2>&1 | grep -vE "^(Resolve|Download|Skipping|Caching|Transforming|Starting|Watching|Up-to-date|Custom actions|Build cache|Invalidating|Task .* is not up-to-date|Snapshotting|Stored|Configured|Evaluating|All input)" | tail -150
           test ${PIPESTATUS[0]} -eq 0
 
       - name: Compilar APK de release
