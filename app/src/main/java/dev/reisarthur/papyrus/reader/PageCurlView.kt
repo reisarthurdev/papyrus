@@ -11,6 +11,7 @@ import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PointF
+import android.graphics.RectF
 import android.graphics.Shader
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
@@ -44,8 +45,13 @@ class PageCurlView(context: Context) : View(context) {
         fun onPageChanged(page: Int)
         fun onTap(x: Float, y: Float): Boolean
         fun onLongPress(x: Float, y: Float)
-        /** Entrou ou saiu do zoom de pinça (o leitor esconde seleção/destaques flutuantes). */
+        /** Entrou ou saiu do zoom de pinça. */
         fun onZoomChanged(zoomed: Boolean) {}
+        /**
+         * A parte visível da página ampliada mudou (pinça ou arrasto). [settled] = o gesto acabou.
+         * O leitor reposiciona a seleção, que é desenhada em coordenadas de tela.
+         */
+        fun onViewportChanged(settled: Boolean) {}
         /** Uma virada (arrasto ou animação) começou: o leitor esconde a camada de seleção. */
         fun onTurnStart() {}
         /** A virada terminou, tendo mudado de página ou não. */
@@ -145,12 +151,13 @@ class PageCurlView(context: Context) : View(context) {
             zoom = newZoom
             clampPan()
             if (wasZoomed != isZoomed) listener?.onZoomChanged(isZoomed)
+            listener?.onViewportChanged(settled = false)
             invalidate()
             return true
         }
 
         override fun onScaleEnd(d: ScaleGestureDetector) {
-            if (zoom < 1.06f) resetZoom() else requestSharp()
+            if (zoom < 1.06f) resetZoom() else { requestSharp(); listener?.onViewportChanged(settled = true) }
         }
     })
 
@@ -165,7 +172,10 @@ class PageCurlView(context: Context) : View(context) {
         edgeAnimator?.cancel(); edgePull = 0f
         sharp = null
         sharpRequest++
-        if (was) listener?.onZoomChanged(false)
+        if (was) {
+            listener?.onZoomChanged(false)
+            listener?.onViewportChanged(settled = true)
+        }
         invalidate()
     }
 
@@ -194,24 +204,35 @@ class PageCurlView(context: Context) : View(context) {
                 downX = e.x; downY = e.y
                 zoomMoved = false
                 zoomGestureHandled = false
+                gestureHandled = false // o toque longo marca true
                 edgeAnimator?.cancel(); edgePull = 0f
                 // só vira a página quem JÁ estava encostado na borda ao tocar: chegar na borda
                 // no meio do arrasto apenas para ali (evita virar sem querer)
                 startedAtLeftEdge = panX >= -1f
                 startedAtRightEdge = panX <= width - width * zoom + 1f
+                // segurar o dedo parado também seleciona texto com a página ampliada
+                removeCallbacks(longPress)
+                postDelayed(longPress, longPressTimeout)
             }
             MotionEvent.ACTION_MOVE -> {
                 if (zoomGestureHandled) return true
-                if (!zoomMoved && (abs(e.x - downX) > slop || abs(e.y - downY) > slop)) zoomMoved = true
+                if (!zoomMoved && (abs(e.x - downX) > slop || abs(e.y - downY) > slop)) {
+                    zoomMoved = true
+                    removeCallbacks(longPress)
+                }
                 if (zoomMoved) {
                     panHorizontally(e.x - zoomLastX)
                     panY += e.y - zoomLastY
                     clampPan()
+                    listener?.onViewportChanged(settled = false)
                     invalidate()
                 }
                 zoomLastX = e.x; zoomLastY = e.y
             }
+            MotionEvent.ACTION_CANCEL -> removeCallbacks(longPress)
             MotionEvent.ACTION_UP -> {
+                removeCallbacks(longPress)
+                if (gestureHandled && !zoomMoved) return true // foi um toque longo (seleção)
                 if (abs(edgePull) > width * EDGE_TURN_FRACTION && !zoomGestureHandled) {
                     // puxou a página ampliada para fora da borda: vira (e volta ao tamanho normal)
                     val next = edgePull < 0
@@ -220,7 +241,7 @@ class PageCurlView(context: Context) : View(context) {
                     return true
                 }
                 if (edgePull != 0f) releaseEdgePull()
-                if (zoomMoved) requestSharp()
+                if (zoomMoved) { requestSharp(); listener?.onViewportChanged(settled = true) }
                 else if (!zoomGestureHandled && listener?.onTap(e.x, e.y) != true) {
                     // tocar nas bordas ainda vira a página (e volta ao tamanho normal)
                     when {
@@ -261,6 +282,15 @@ class PageCurlView(context: Context) : View(context) {
     }
 
     // ---------------- API pública ----------------
+
+    /** Retângulo da página (escala normal) -> onde ele aparece na tela agora (com o zoom de pinça). */
+    fun toScreen(r: RectF): RectF =
+        if (!isZoomed) r else RectF(r.left * zoom + panX, r.top * zoom + panY, r.right * zoom + panX, r.bottom * zoom + panY)
+
+    /** Ponto da tela -> ponto da página na escala normal (o inverso de [toScreen]). */
+    fun toPageX(x: Float) = if (isZoomed) (x - panX) / zoom else x
+    fun toPageY(y: Float) = if (isZoomed) (y - panY) / zoom else y
+
 
     fun showPage(page: Int) {
         animator?.cancel()

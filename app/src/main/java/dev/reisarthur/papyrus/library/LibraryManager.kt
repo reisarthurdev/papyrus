@@ -90,9 +90,10 @@ object LibraryManager {
                     if (existing.sections == 0) toImport += existing.id to f
                 }
                 existing.status == BookStatus.IMPORTING -> toImport += existing.id to f
-                // PDFs de uma versão antiga do formato: reimporta UMA vez (a marca é gravada sempre)
+                // PDF de formato antigo, ou que ficou sem texto numa versão anterior: reimporta
+                // UMA vez (as marcas são gravadas sempre, mesmo se a extração falhar de novo)
                 existing.format == BookFormat.PDF && existing.status == BookStatus.READY &&
-                    !File(BookFiles.dir(context.filesDir, existing.id), PdfImporter.FORMAT_MARKER).exists() ->
+                    needsPdfReimport(BookFiles.dir(context.filesDir, existing.id)) ->
                     toImport += existing.id to f
             }
         }
@@ -188,6 +189,10 @@ object LibraryManager {
         val am = context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
         return if (am.isLowRamDevice || Runtime.getRuntime().availableProcessors() < 4) 1 else 2
     }
+
+    private fun needsPdfReimport(dir: File): Boolean =
+        !File(dir, PdfImporter.FORMAT_MARKER).exists() ||
+            (!dev.reisarthur.papyrus.pdf.PdfTextStore(dir).exists && !File(dir, PdfImporter.TEXT_RETRY_MARKER).exists())
 
     /** Importa (ou reimporta) um livro. Roda na thread atual. */
     fun importBook(

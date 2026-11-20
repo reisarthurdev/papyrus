@@ -379,7 +379,8 @@ class ReaderActivity : Activity(),
             Toast.makeText(this, "Este PDF não tem texto selecionável.", Toast.LENGTH_SHORT).show()
             return
         }
-        val loc = c.charAt(curl.currentPage, x, y) ?: return
+        // com zoom de pinça, o ponto da tela é convertido para a página em escala normal
+        val loc = c.charAt(curl.currentPage, curl.toPageX(x), curl.toPageY(y)) ?: return
         val word = TextUtil.wordAt(c.sectionText(loc.section), loc.offset) ?: return
         curl.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
         selStart = Locator(loc.section, word.first)
@@ -390,12 +391,14 @@ class ReaderActivity : Activity(),
     }
 
     override fun onZoomChanged(zoomed: Boolean) {
-        if (zoomed) {
-            clearSelection()
-            if (barsVisible) showBars(false)
-        }
-        // seleção e destaque de leitura são desenhados na escala normal: escondidos enquanto ampliado
-        overlay.visibility = if (zoomed) View.INVISIBLE else View.VISIBLE
+        if (zoomed && barsVisible) showBars(false)
+    }
+
+    /** A seleção acompanha a página ampliada; o menu some durante o gesto e volta quando ele acaba. */
+    override fun onViewportChanged(settled: Boolean) {
+        if (selStart == null) return
+        refreshOverlay()
+        if (settled) showSelectionMenu() else { popup?.dismiss(); popup = null }
     }
 
     // =====================================================================
@@ -407,13 +410,14 @@ class ReaderActivity : Activity(),
         val page = curl.currentPage
         val s = selStart
         val e = selEnd
-        overlay.setSelection(if (s != null && e != null) c.rects(page, s, e) else emptyList())
-        overlay.setSearchHit(searchHit?.let { c.rects(page, it.start, it.end) }.orEmpty())
+        // retângulos vêm na escala normal da página; a camada desenha onde eles estão na tela agora
+        overlay.setSelection(if (s != null && e != null) c.rects(page, s, e).map(curl::toScreen) else emptyList())
+        overlay.setSearchHit(searchHit?.let { c.rects(page, it.start, it.end) }.orEmpty().map(curl::toScreen))
     }
 
     override fun onHandleMoved(isStart: Boolean, x: Float, y: Float) {
         val c = content ?: return
-        val loc = c.charAt(curl.currentPage, x, y) ?: return
+        val loc = c.charAt(curl.currentPage, curl.toPageX(x), curl.toPageY(y)) ?: return
         val text = c.sectionText(loc.section)
         val word = TextUtil.wordAt(text, loc.offset)
         popup?.dismiss()

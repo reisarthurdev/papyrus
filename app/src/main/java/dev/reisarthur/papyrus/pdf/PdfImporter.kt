@@ -35,6 +35,11 @@ class PdfImporter(private val pdfFile: File, private val outDir: File, private v
     companion object {
         /** Muda quando o formato dos dados do PDF muda; livros sem ela são reimportados uma vez. */
         const val FORMAT_MARKER = "pdf.v2"
+        /**
+         * Livros importados sem texto antes da extração ficar mais tolerante a falhas não têm esta
+         * marca: são reimportados uma vez para tentar recuperar a seleção, as notas e a busca.
+         */
+        const val TEXT_RETRY_MARKER = "pdf.textretry"
 
         /** Grava a 1ª página como capa em [out]; devolve o número de páginas. */
         fun renderCover(fd: ParcelFileDescriptor, out: File): Int = PdfRenderer(fd).use { renderer ->
@@ -63,25 +68,22 @@ class PdfImporter(private val pdfFile: File, private val outDir: File, private v
         var author = ""
         runCatching {
             load().use { doc ->
-                doc.documentInformation?.author?.takeIf { it.isNotBlank() }?.let { author = it.trim() }
-                TocIO.save(File(outDir, "toc.json"), readOutline(doc))
+                // autor e sumário são extras: um sumário malformado não pode custar o texto do livro
+                runCatching { doc.documentInformation?.author?.takeIf { it.isNotBlank() }?.let { author = it.trim() } }
+                runCatching { TocIO.save(File(outDir, "toc.json"), readOutline(doc)) }
             }
             val total = pageCount
             val done = AtomicInteger()
             val report = { units: Int -> onProgress(done.addAndGet(units), total) }
             // blocos contíguos de páginas, um por thread; cada um devolve suas páginas já codificadas
             val ranges = splitRanges(pageCount, parallelism.coerceIn(1, maxOf(1, pageCount / 8)))
-            val chunks = if (ranges.size == 1) {
-                listOf(processRange(ranges[0], report))
-            } else {
-                val pool = Executors.newFixedThreadPool(ranges.size - 1)
-                try {
-                    // a thread atual faz o primeiro bloco; as outras, o resto
-                    val others = ranges.drop(1).map { r -> pool.submit(Callable { processRange(r, report) }) }
-                    listOf(processRange(ranges[0], report)) + others.map { it.get() }
-                } finally {
-                    pool.shutdown()
-                }
+            val chunks = runCatching { extract(ranges, report) }.getOrElse { error ->
+                if (ranges.size == 1) throw error
+                // se algo falhar em paralelo (memória, fonte rara), tenta de novo com uma thread só:
+                // perder o texto do livro (seleção, notas, busca) é pior que demorar um pouco mais
+                android.util.Log.w("papyrus", "Extração paralela falhou; repetindo em sequência", error)
+                done.set(0)
+                extract(listOf(0 until pageCount), report)
             }
             PdfTextStore.Writer(PdfTextStore(outDir)).use { writer ->
                 chunks.forEach { c -> c.pages.forEach(writer::writeEncoded) }
@@ -89,13 +91,27 @@ class PdfImporter(private val pdfFile: File, private val outDir: File, private v
             // onde ficam as fotos de cada página (não invertem no tema escuro)
             PdfFigures.save(outDir, chunks.flatMap { it.figures })
         }.onFailure {
+            android.util.Log.e("papyrus", "Sem texto extraído de $displayName", it)
             // PDF escaneado/protegido: o livro abre, só sem recursos de texto.
             File(outDir, "text2.dat").delete()
             File(outDir, "text2.idx").delete()
         }
         // marca de versão gravada SEMPRE (mesmo se o pdfbox falhou): impede reimportar em ciclo
         File(outDir, FORMAT_MARKER).writeText("ok")
+        File(outDir, TEXT_RETRY_MARKER).writeText("ok")
         return ImportResult(title, author, pageCount)
+    }
+
+    /** Processa os blocos de páginas: o primeiro na thread atual, os outros em threads extras. */
+    private fun extract(ranges: List<IntRange>, report: (Int) -> Unit): List<Chunk> {
+        if (ranges.size == 1) return listOf(processRange(ranges[0], report))
+        val pool = Executors.newFixedThreadPool(ranges.size - 1)
+        try {
+            val others = ranges.drop(1).map { r -> pool.submit(Callable { processRange(r, report) }) }
+            return listOf(processRange(ranges[0], report)) + others.map { it.get() }
+        } finally {
+            pool.shutdownNow()
+        }
     }
 
     /** Memória até 16 MB por documento aberto; o resto vai para arquivo temporário. */
