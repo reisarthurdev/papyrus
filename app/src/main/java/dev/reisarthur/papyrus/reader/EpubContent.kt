@@ -486,15 +486,17 @@ class EpubContent(private val dir: File) : BookContent {
         var spaces = 0
         for (i in start until end) if (text[i] == ' ') spaces++
         if (spaces == 0) return 0f
+        // larguras pelas posições do layout (que vêm SEM o esticamento). Duas armadilhas:
+        // - a posição do fim exato da linha é tratada como início da linha seguinte: em linha que
+        //   termina sem espaço (hifenizada ou com hífen do texto) mede até o último caractere e
+        //   soma a largura dele;
+        // - Layout.getDesiredWidth soma o recuo do parágrafo: não serve aqui.
         val startX = layout.getPrimaryHorizontal(start)
-        val available = layout.getParagraphRight(line) - startX
-        // largura natural (sem o esticamento). Atenção: a posição do fim exato da linha é tratada
-        // pelo Android como início da linha SEGUINTE; em linha que termina sem espaço (hifenizada,
-        // ou com hífen do texto) mede-se até o último caractere e soma a largura dele
         val endX = if (end < lineEnd) layout.getPrimaryHorizontal(end)
-        else layout.getPrimaryHorizontal(end - 1) + Layout.getDesiredWidth(text, end - 1, end, layout.paint)
+        else layout.getPrimaryHorizontal(end - 1) + layout.paint.measureText(text, end - 1, end)
+        val available = layout.getParagraphRight(line) - startX
         val natural = endX - startX + hyphenWidth(layout, line)
-        // se o próprio Android já devolveu a posição justificada (outras versões), não soma de novo
+        // se esta versão do Android já devolve posições esticadas, a linha já "ocupa" tudo
         if (natural >= available - 1f) return 0f
         return (available - natural) / spaces
     }
