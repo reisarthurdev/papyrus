@@ -409,9 +409,7 @@ class EpubContent(private val dir: File) : BookContent {
         val layout = r.layout
         val ly = (y - s.contentTop + layout.getLineTop(r.firstLine)).toInt()
         val line = layout.getLineForVertical(ly).coerceIn(r.firstLine, r.endLine - 1)
-        val offset = layout.getOffsetForHorizontal(line, x - s.contentLeft)
-        // getOffsetForHorizontal devolve a posição do cursor; queremos o caractere sob o dedo
-        val local = if (offset > layout.getLineStart(line) && x - s.contentLeft < layout.getPrimaryHorizontal(offset)) offset - 1 else offset
+        val local = charIndexAt(layout, line, x - s.contentLeft)
         return Locator(p.chapter, (local + r.sliceStart).coerceIn(0, maxOf(0, texts[p.chapter].length - 1)))
     }
 
@@ -439,8 +437,8 @@ class EpubContent(private val dir: File) : BookContent {
             // não destaca o \n nem o espaço final da linha
             while (le > ls && text.getOrNull(le - 1 + r.sliceStart)?.isWhitespace() == true) le--
             if (le <= ls) continue
-            val left = layout.getPrimaryHorizontal(ls)
-            val right = if (le >= layout.getLineEnd(line)) layout.getLineRight(line) else layout.getPrimaryHorizontal(le)
+            val left = xOf(layout, line, ls)
+            val right = if (le >= layout.getLineEnd(line)) layout.getLineRight(line) else xOf(layout, line, le)
             // rente às letras: do topo das maiúsculas/acentos (~0,8 em) até o fim das descendentes
             // (~0,24 em). As métricas da fonte são bem mais altas que isso e deixavam folga.
             val baseline = layout.getLineBaseline(line).toFloat()
@@ -451,6 +449,67 @@ class EpubContent(private val dir: File) : BookContent {
             )
         }
         return out
+    }
+
+    // ---------------- Posição das letras em linhas justificadas ----------------
+
+    /**
+     * Posição x (no layout) do início do caractere [offset] da linha [line], como ele é DESENHADO.
+     *
+     * O Android desenha linhas justificadas com espaço extra entre as palavras, mas
+     * getPrimaryHorizontal/getOffsetForHorizontal devolvem a posição sem esse espaço: a seleção
+     * ia ficando para a esquerda das letras a cada palavra. Aqui o extra é recalculado do mesmo
+     * jeito que o Android faz (TextLine.justify): a sobra da linha dividida igualmente pelos
+     * espaços comuns (U+0020), sem contar os do fim da linha.
+     */
+    private fun xOf(layout: Layout, line: Int, offset: Int): Float {
+        val natural = layout.getPrimaryHorizontal(offset)
+        val extra = justifyExtra(layout, line)
+        if (extra == 0f) return natural
+        val text = layout.text
+        var spaces = 0
+        for (i in layout.getLineStart(line) until offset) if (text[i] == ' ') spaces++
+        return natural + extra * spaces
+    }
+
+    /** Espaço extra por espaço comum numa linha justificada (0 se a linha não é esticada). */
+    private fun justifyExtra(layout: Layout, line: Int): Float {
+        if (layout.justificationMode == Layout.JUSTIFICATION_MODE_NONE) return 0f
+        val start = layout.getLineStart(line)
+        val lineEnd = layout.getLineEnd(line)
+        val text = layout.text
+        // a última linha de cada parágrafo (e do texto) não é justificada
+        if (line == layout.lineCount - 1 || (lineEnd > start && text[lineEnd - 1] == '\n')) return 0f
+        var end = lineEnd
+        while (end > start && text[end - 1].isWhitespace()) end--
+        var spaces = 0
+        for (i in start until end) if (text[i] == ' ') spaces++
+        if (spaces == 0) return 0f
+        val startX = layout.getPrimaryHorizontal(start)
+        val available = layout.getParagraphRight(line) - startX
+        val natural = layout.getPrimaryHorizontal(end) - startX + hyphenWidth(layout, line)
+        // se o próprio Android já devolveu a posição justificada (outras versões), não soma de novo
+        if (natural >= available - 1f) return 0f
+        return (available - natural) / spaces
+    }
+
+    /** Hífen automático no fim da linha: ocupa largura, mas não existe no texto. */
+    private fun hyphenWidth(layout: Layout, line: Int): Float =
+        if (android.os.Build.VERSION.SDK_INT >= 29 && layout.getEndHyphenEdit(line) != 0) layout.paint.measureText("-") else 0f
+
+    /** Índice do caractere sob o ponto [x] da linha, considerando a justificação. */
+    private fun charIndexAt(layout: Layout, line: Int, x: Float): Int {
+        val start = layout.getLineStart(line)
+        var end = layout.getLineEnd(line)
+        while (end > start + 1 && layout.text[end - 1] == '\n') end--
+        // último caractere cujo início está à esquerda do dedo
+        var lo = start
+        var hi = end - 1
+        while (lo < hi) {
+            val mid = (lo + hi + 1) ushr 1
+            if (xOf(layout, line, mid) <= x) lo = mid else hi = mid - 1
+        }
+        return lo
     }
 
     // ---------------- Sumário ----------------
