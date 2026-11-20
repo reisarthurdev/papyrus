@@ -40,7 +40,7 @@ jobs:
           PAPYRUS_DEBUG_DIR: /tmp/papyrus-debug
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon testReleaseUnitTest -Pandroid.useAndroidX=true -PbuildNumber=${{ github.run_number }} -i 2>&1 | grep -E "pior diferença|->|FAILED|PASSED|Exception|at dev\.|BUILD" | head -80; test ${PIPESTATUS[0]} -eq 0
+          ./gradlew --no-daemon testReleaseUnitTest -Pandroid.useAndroidX=true -PbuildNumber=${{ github.run_number }} -i 2>&1 | grep -E "^e: |pior diferença|->|FAILED|PASSED|Exception|at dev\.|BUILD" | head -80; test ${PIPESTATUS[0]} -eq 0
 
       - name: Imagens de diagnóstico
         if: always() && github.ref != 'refs/heads/main'
