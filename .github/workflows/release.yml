@@ -36,9 +36,20 @@ jobs:
       # pdfbox extraindo texto e fotos de um PDF, seleção de EPUB conferida contra as letras
       # desenhadas e o dicionário: se algo quebrar, o APK não é publicado
       - name: Testes
+        env:
+          PAPYRUS_DEBUG_DIR: /tmp/papyrus-debug
         run: |
           chmod +x gradlew
           ./gradlew --no-daemon testReleaseUnitTest -Pandroid.useAndroidX=true -PbuildNumber=${{ github.run_number }}
+
+      - name: Imagens de diagnóstico
+        if: always() && github.ref != 'refs/heads/main'
+        run: |
+          [ -d /tmp/papyrus-debug ] || exit 0
+          cd /tmp/papyrus-debug
+          git init -q && git checkout -q -b diag-out
+          git add -A && git -c user.name=ci -c user.email=ci@local commit -qm imagens
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" diag-out
 
       - name: Compilar APK de release
         if: github.ref == 'refs/heads/main'
