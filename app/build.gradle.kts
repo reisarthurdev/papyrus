@@ -70,6 +70,11 @@ android {
         }
     }
 
+    testOptions {
+        // os testes de PDF rodam o pdfbox de verdade, que lê arquivos dos assets da biblioteca
+        unitTests.isIncludeAndroidResources = true
+    }
+
     lint {
         // o lint não barra o build do release (o app não depende de AndroidX/Play Store)
         checkReleaseBuilds = false
@@ -87,4 +92,8 @@ dependencies {
     // Única dependência externa: extrair texto (com posição de cada letra) dos PDFs.
     // A renderização das páginas usa o PdfRenderer nativo do Android.
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
+
+    // só para os testes (não entram no APK)
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.14.1")
 }

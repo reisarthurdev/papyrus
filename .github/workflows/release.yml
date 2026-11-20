@@ -33,7 +33,14 @@ jobs:
           echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
           echo "PAPYRUS_KEYSTORE_FILE=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
 
+      - name: Testes (extração de texto dos PDFs)
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon testReleaseUnitTest -PbuildNumber=${{ github.run_number }} --info 2>&1 | grep -E "PdfImporterTest|página 1|Exception|at dev\.|at com\.tom|Caused|FAILED|PASSED|tests completed" | head -200
+          test ${PIPESTATUS[0]} -eq 0
+
       - name: Compilar APK de release
+        if: github.ref == 'refs/heads/main'
         env:
           PAPYRUS_KEYSTORE_PASSWORD: ${{ secrets.PAPYRUS_KEYSTORE_PASSWORD }}
           PAPYRUS_KEY_ALIAS: ${{ secrets.PAPYRUS_KEY_ALIAS }}
@@ -44,6 +51,7 @@ jobs:
           cp app/build/outputs/apk/release/app-release.apk papyrus-v1.0.${{ github.run_number }}.apk
 
       - name: Publicar release
+        if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.0.${{ github.run_number }}
