@@ -2,11 +2,16 @@ package dev.reisarthur.papyrus.pdf
 
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.RectF
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
+import com.tom_roush.pdfbox.contentstream.operator.Operator
+import com.tom_roush.pdfbox.cos.COSBase
+import com.tom_roush.pdfbox.cos.COSName
 import com.tom_roush.pdfbox.io.MemoryUsageSetting
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.PDPage
+import com.tom_roush.pdfbox.pdmodel.graphics.image.PDImageXObject
 import com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlineNode
 import com.tom_roush.pdfbox.text.PDFTextStripper
 import com.tom_roush.pdfbox.text.TextPosition
@@ -30,7 +35,6 @@ class PdfImporter(private val pdfFile: File, private val outDir: File, private v
     companion object {
         /** Muda quando o formato dos dados do PDF muda; livros sem ela são reimportados uma vez. */
         const val FORMAT_MARKER = "pdf.v2"
-        private const val TEXT_WEIGHT = 4
 
         /** Grava a 1ª página como capa em [out]; devolve o número de páginas. */
         fun renderCover(fd: ParcelFileDescriptor, out: File): Int = PdfRenderer(fd).use { renderer ->
@@ -48,8 +52,7 @@ class PdfImporter(private val pdfFile: File, private val outDir: File, private v
     }
 
     /**
-     * [onProgress] recebe (feito, total) em unidades de trabalho: cada página vale [TEXT_WEIGHT]
-     * na extração de texto (a parte pesada) e 1 na busca de figuras.
+     * [onProgress] recebe (feito, total): páginas processadas e total de páginas.
      * [parallelism]: quantas threads dividem as páginas deste PDF (cada uma abre o documento
      * por conta própria, porque o pdfbox não pode ser usado por duas threads ao mesmo tempo).
      */
@@ -63,7 +66,7 @@ class PdfImporter(private val pdfFile: File, private val outDir: File, private v
                 doc.documentInformation?.author?.takeIf { it.isNotBlank() }?.let { author = it.trim() }
                 TocIO.save(File(outDir, "toc.json"), readOutline(doc))
             }
-            val total = pageCount * (TEXT_WEIGHT + 1)
+            val total = pageCount
             val done = AtomicInteger()
             val report = { units: Int -> onProgress(done.addAndGet(units), total) }
             // blocos contíguos de páginas, um por thread; cada um devolve suas páginas já codificadas
@@ -83,7 +86,7 @@ class PdfImporter(private val pdfFile: File, private val outDir: File, private v
             PdfTextStore.Writer(PdfTextStore(outDir)).use { writer ->
                 chunks.forEach { c -> c.pages.forEach(writer::writeEncoded) }
             }
-            // onde ficam imagens e desenhos de cada página (para o zoom manter figuras inteiras)
+            // onde ficam as fotos de cada página (não invertem no tema escuro)
             PdfFigures.save(outDir, chunks.flatMap { it.figures })
         }.onFailure {
             // PDF escaneado/protegido: o livro abre, só sem recursos de texto.
@@ -100,19 +103,18 @@ class PdfImporter(private val pdfFile: File, private val outDir: File, private v
 
     private class Chunk(val pages: List<ByteArray>, val figures: List<PdfFigures.Page>)
 
-    /** Extrai texto e figuras das páginas [range] (índices a partir de 0) com um documento próprio. */
+    /** Extrai texto e fotos das páginas [range] (índices a partir de 0) com um documento próprio. */
     private fun processRange(range: IntRange, report: (Int) -> Unit): Chunk = load().use { doc ->
         val pages = ArrayList<ByteArray>(range.count())
-        val extractor = TextExtractor(range.first, { text, boxes -> pages += PdfTextStore.encode(text, boxes) }) { report(TEXT_WEIGHT) }
+        val figures = ArrayList<PdfFigures.Page>(range.count())
+        val extractor = TextExtractor(range.first, { text, boxes, images ->
+            pages += PdfTextStore.encode(text, boxes)
+            figures += if (images.isEmpty()) PdfFigures.Page.EMPTY else PdfFigures.Page(images, images)
+        }) { report(1) }
         extractor.setStartPage(range.first + 1) // o pdfbox conta páginas a partir de 1
         extractor.setEndPage(range.last + 1)
         extractor.getText(doc)
         extractor.fillUntil(range.last + 1)
-        val figures = range.map { i ->
-            val page = runCatching { PdfFigures.collect(doc.getPage(i)) }.getOrDefault(PdfFigures.Page.EMPTY)
-            report(1)
-            page
-        }
         Chunk(pages, figures)
     }
 
@@ -142,7 +144,7 @@ class PdfImporter(private val pdfFile: File, private val outDir: File, private v
     /** Captura cada caractere com sua caixa, página por página. */
     private class TextExtractor(
         firstPage: Int,
-        private val sink: (String, FloatArray) -> Unit,
+        private val sink: (String, FloatArray, List<RectF>) -> Unit,
         private val onPage: () -> Unit,
     ) : PDFTextStripper() {
         private val sb = StringBuilder()
@@ -152,13 +154,37 @@ class PdfImporter(private val pdfFile: File, private val outDir: File, private v
         /** Próxima página a gravar (índice absoluto; páginas sem conteúdo são puladas pelo pdfbox). */
         private var written = firstPage
 
+        /** Fotos da página atual; null em página girada (raro: as fotos dela simplesmente invertem). */
+        private var images: ArrayList<RectF>? = null
+        private var cropLeft = 0f
+        private var cropTop = 0f
+
         override fun startPage(page: PDPage) {
             sb.setLength(0)
             val box = page.cropBox
             val rotated = page.rotation % 180 != 0
             pageW = if (rotated) box.height else box.width
             pageH = if (rotated) box.width else box.height
+            cropLeft = box.lowerLeftX
+            cropTop = box.upperRightY
+            images = if (page.rotation % 360 == 0) ArrayList() else null
             super.startPage(page)
+        }
+
+        /**
+         * O extrator de texto já percorre todos os comandos da página: o "Do" (desenhar objeto)
+         * de uma imagem é anotado aqui mesmo, sem uma segunda passada pelo PDF.
+         */
+        override fun processOperator(op: Operator, operands: MutableList<COSBase>) {
+            val list = images
+            if (list != null && op.name == "Do") {
+                val name = operands.firstOrNull() as? COSName
+                val xobject = name?.let { runCatching { resources?.getXObject(it) }.getOrNull() }
+                if (xobject is PDImageXObject) {
+                    PdfFigures.imageRect(graphicsState.currentTransformationMatrix, cropLeft, cropTop, pageW, pageH)?.let { list += it }
+                }
+            }
+            super.processOperator(op, operands)
         }
 
         override fun writeString(text: String, textPositions: MutableList<TextPosition>) {
@@ -183,7 +209,7 @@ class PdfImporter(private val pdfFile: File, private val outDir: File, private v
         override fun endPage(page: PDPage) {
             super.endPage(page)
             fillUntil(currentPageNo - 1)
-            sink(sb.toString(), boxes.copyOf(sb.length * 4))
+            sink(sb.toString(), boxes.copyOf(sb.length * 4), images.orEmpty())
             written++
             onPage()
         }
@@ -191,7 +217,7 @@ class PdfImporter(private val pdfFile: File, private val outDir: File, private v
         /** Grava páginas vazias até a página [count] (exclusiva), mantendo o índice alinhado com o PDF. */
         fun fillUntil(count: Int) {
             while (written < count) {
-                sink("", FloatArray(0))
+                sink("", FloatArray(0), emptyList())
                 written++
                 onPage()
             }

@@ -146,8 +146,6 @@ object ReaderDialogs {
         fun onClosed() {}
     }
 
-    private val ZOOMS = listOf(1f, 1.25f, 1.5f, 1.75f, 2f, 2.5f, 3f)
-
     /** Painel inferior com tema, tamanho do texto/zoom e ajustes de layout. */
     fun showSettings(activity: Activity, isPdf: Boolean, pdfHasText: Boolean, listener: SettingsListener) {
         val sheet = activity.bottomSheet(Prefs.theme.isDark, View(activity))
@@ -192,29 +190,6 @@ object ReaderDialogs {
         root.addView(themes)
 
         if (isPdf) {
-            section("Zoom")
-            if (pdfHasText) {
-                // − 150% +  (mesmo formato do tamanho do texto do EPUB)
-                var index = ZOOMS.indexOfFirst { kotlin.math.abs(it - Prefs.pdfZoom) < 0.01f }.coerceAtLeast(0)
-                val label = activity.text("", 16f, colors.onSurface).apply { gravity = Gravity.CENTER }
-                fun update() { label.text = "${(ZOOMS[index] * 100).toInt()}%" }
-                fun step(delta: Int) {
-                    val next = (index + delta).coerceIn(0, ZOOMS.lastIndex)
-                    if (next == index) return
-                    index = next
-                    update()
-                    Prefs.pdfZoom = ZOOMS[index]
-                    listener.onLayoutChanged()
-                }
-                update()
-                val row = activity.horizontal()
-                row.addView(stepButton(activity, colors, "−", 18f) { step(-1) }, weight())
-                row.addView(label, weight())
-                row.addView(stepButton(activity, colors, "+", 18f) { step(+1) }, weight())
-                root.addView(row)
-            } else {
-                root.addView(activity.text("Este PDF é escaneado (sem texto), então só dá para ampliar com pinça.", 13f, colors.onSurfaceVariant))
-            }
             section("Cores")
             root.addView(toggleRow(activity, colors, "Inverter cores no tema escuro", Prefs.pdfDarkInvert) {
                 Prefs.pdfDarkInvert = it

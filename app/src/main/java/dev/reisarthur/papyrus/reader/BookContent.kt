@@ -17,14 +17,13 @@ data class LayoutSettings(
     val justify: Boolean,
     val theme: ReaderTheme,
     val pdfInvert: Boolean,
-    /** Zoom consolidado do PDF (1 = página inteira; acima disso o texto é refluído). */
-    val pdfZoom: Float,
     /** Área ocupada por notch/barra de gestos, para o texto não ficar embaixo. */
     val insetTop: Int,
     val insetBottom: Int,
 ) {
     /** Só o que afeta a quebra de páginas (tema não entra: trocar cor não repagina). */
-    fun paginationKey() = "v3|$width|$height|$fontPx|$lineSpacing|$marginPx|$justify|$insetTop|$insetBottom|$pdfZoom"
+    // o "1.0" no fim era o zoom do PDF (removido); fica para os caches já gravados continuarem valendo
+    fun paginationKey() = "v3|$width|$height|$fontPx|$lineSpacing|$marginPx|$justify|$insetTop|$insetBottom|1.0"
 }
 
 /**
@@ -47,7 +46,6 @@ fun readerSettings(
         justify = true, // todo livro é justificado
         theme = prefs.theme,
         pdfInvert = prefs.pdfDarkInvert,
-        pdfZoom = if (format == dev.reisarthur.papyrus.data.BookFormat.PDF) prefs.pdfZoom else 1f,
         insetTop = insetTop,
         insetBottom = insetBottom,
     )

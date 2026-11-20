@@ -20,122 +20,51 @@ import dev.reisarthur.papyrus.data.Locator
 import dev.reisarthur.papyrus.data.TocEntry
 import dev.reisarthur.papyrus.pdf.PageText
 import dev.reisarthur.papyrus.pdf.PdfFigures
-import dev.reisarthur.papyrus.pdf.PdfReflow
 import dev.reisarthur.papyrus.pdf.PdfTextStore
-import dev.reisarthur.papyrus.pdf.ReflowStore
 import java.io.File
-import kotlin.math.sqrt
 
 /**
- * PDF em dois modos:
- * - 100%: página inteira encaixada na tela (renderização nativa do PdfRenderer);
- * - zoom consolidado (125%, 150%…): palavras reorganizadas em linhas que cabem na tela
- *   ([PdfReflow]), então nada fica cortado na borda. PDFs escaneados ficam sempre em 100%.
- * Em qualquer modo, o zoom de pinça desenha só a parte visível na resolução certa.
+ * PDF com a página inteira encaixada na tela (renderização nativa do PdfRenderer): uma página
+ * do leitor = uma página do PDF, sem paginação para calcular. O zoom de pinça desenha só a parte
+ * visível, na resolução certa.
  */
-class PdfContent(context: Context, uri: Uri, private val dataDir: File, private val toc: List<TocEntry>) : BookContent {
+class PdfContent(context: Context, uri: Uri, dataDir: File, private val toc: List<TocEntry>) : BookContent {
 
     private val fd: ParcelFileDescriptor = context.contentResolver.openFileDescriptor(uri, "r")
         ?: error("Não foi possível abrir o PDF")
     private val renderer = PdfRenderer(fd)
     private val textStore = PdfTextStore(dataDir)
-    /** Regiões de imagem/desenho de cada página (registradas na importação). */
+    /** Onde ficam as fotos de cada página (registradas na importação): não invertem no escuro. */
     private val figures = PdfFigures.load(dataDir)
     private val textCache = LruCache<Int, PageText>(16)
     private val pageSizes = HashMap<Int, Pair<Int, Int>>()
     private var settings: LayoutSettings? = null
     private var scratch: Bitmap? = null
 
-    // modo refluído
-    private var reflow: List<PdfReflow.SubPage>? = null
-    private var firstSub = IntArray(0)
-    private var source: Bitmap? = null
-    private var sourceKey = ""
+    init {
+        // restos do zoom consolidado (removido): libera o espaço
+        dataDir.listFiles { f -> f.name.startsWith("reflow") }?.forEach { it.delete() }
+    }
 
-    private val pdfPages = renderer.pageCount
-    override val sectionCount = pdfPages
+    override val pageCount = renderer.pageCount
+    override val sectionCount = pageCount
     override val hasText = textStore.exists
-    override val pageCount: Int @Synchronized get() = reflow?.size ?: pdfPages
 
-    /** Reflows já calculados por tamanho de tela/zoom: trocar tema ou voltar a um zoom não recalcula nada. */
-    private val reflowCache = object : LinkedHashMap<String, ReflowStore.Result>(4, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ReflowStore.Result>?) = size > 3
-    }
-
+    /** Nada a calcular: só guarda o tamanho da tela e as cores. */
+    @Synchronized
     override fun layout(settings: LayoutSettings, onProgress: (Int, Int) -> Unit) {
-        val reflowed = settings.pdfZoom > 1.01f && hasText
-        val key = "r2|${settings.width}|${settings.height}|${settings.density}|${settings.pdfZoom}|${settings.insetTop}|${settings.insetBottom}"
-        // calculado FORA da trava: a página atual continua sendo desenhada enquanto pagina.
-        // memória → disco → calcula (e grava): cada configuração é paginada uma vez só
-        val result = if (!reflowed) null else synchronized(reflowCache) { reflowCache[key] }
-            ?: ReflowStore.load(dataDir, key)
-            ?: buildReflow(settings, onProgress).also { ReflowStore.save(dataDir, key, it) }
-        synchronized(this) {
-            if (this.settings?.pdfZoom != settings.pdfZoom) { source?.recycle(); source = null; sourceKey = "" }
-            this.settings = settings
-            reflow = result?.pages
-            firstSub = result?.firstSub ?: IntArray(0)
-        }
-        if (result != null) synchronized(reflowCache) { reflowCache[key] = result }
+        this.settings = settings
     }
 
-    /**
-     * Pagina o livro inteiro no zoom escolhido. As páginas são independentes, então são divididas
-     * em blocos e calculadas em paralelo; o resultado é montado na ordem original.
-     */
-    private fun buildReflow(s: LayoutSettings, onProgress: (Int, Int) -> Unit): ReflowStore.Result {
-        val engine = PdfReflow(
-            s.width, s.height,
-            marginX = (s.density * 18).toInt(),
-            marginTop = s.insetTop + (s.density * 28).toInt(),
-            marginBottom = s.insetBottom + (s.density * 36).toInt(),
-        )
-        val perPage = arrayOfNulls<List<PdfReflow.SubPage>>(pdfPages)
-        val done = java.util.concurrent.atomic.AtomicInteger()
-        val chunk = 8
-        (0 until pdfPages step chunk).map { from ->
-            POOL.submit {
-                for (p in from until minOf(pdfPages, from + chunk)) {
-                    val fit = fitRect(p, s)
-                    val text = pageText(p)
-                    val figs = figuresOf(p)
-                    perPage[p] = engine.layoutPage(p, text, figs.all, figs.images, fit.width() * s.pdfZoom, fit.height() * s.pdfZoom)
-                        // página sem texto (capa, figura inteira): mostra a página toda encaixada
-                        .ifEmpty { listOf(PdfReflow.SubPage(p, 0, text.length, emptyList(), listOf(PdfReflow.Figure(RectF(0f, 0f, 1f, 1f), fit)))) }
-                    val n = done.incrementAndGet()
-                    if (n % 8 == 0) onProgress(n, pdfPages)
-                }
-            }
-        }.forEach { it.get() }
-        val out = ArrayList<PdfReflow.SubPage>()
-        val first = IntArray(pdfPages)
-        for (p in 0 until pdfPages) {
-            first[p] = out.size
-            out += perPage[p]!!
-        }
-        return ReflowStore.Result(out, first)
-    }
-
-    private fun figuresOf(page: Int) = figures.getOrElse(page) { PdfFigures.Page.EMPTY }
+    private fun imagesOf(page: Int) = figures.getOrNull(page)?.images.orEmpty()
 
     // ---------------- Navegação ----------------
 
-    @Synchronized
-    override fun pageOf(loc: Locator): Int {
-        val r = reflow ?: return loc.section.coerceIn(0, pdfPages - 1)
-        val pdfPage = loc.section.coerceIn(0, pdfPages - 1)
-        var i = firstSub[pdfPage]
-        while (i + 1 < r.size && r[i + 1].pdfPage == pdfPage && r[i + 1].startOffset <= loc.offset) i++
-        return i
-    }
+    override fun pageOf(loc: Locator): Int = loc.section.coerceIn(0, pageCount - 1)
 
-    @Synchronized
-    override fun pageStart(page: Int): Locator =
-        reflow?.getOrNull(page)?.let { Locator(it.pdfPage, it.startOffset) } ?: Locator(page, 0)
+    override fun pageStart(page: Int): Locator = Locator(page, 0)
 
-    @Synchronized
-    override fun pageEnd(page: Int): Locator =
-        reflow?.getOrNull(page)?.let { Locator(it.pdfPage, it.endOffset) } ?: Locator(page, pageText(page).length)
+    override fun pageEnd(page: Int): Locator = Locator(page, pageText(page).length)
 
     override fun sectionText(section: Int): String = pageText(section).text
 
@@ -170,20 +99,9 @@ class PdfContent(context: Context, uri: Uri, private val dataDir: File, private 
     @Synchronized
     override fun drawViewport(page: Int, canvas: Canvas, marks: List<Mark>, zoom: Float, panX: Float, panY: Float) {
         val s = settings ?: return
-        val r = reflow
-        canvas.drawColor(
-            when {
-                s.theme.isDark && s.pdfInvert -> Color.BLACK
-                // escuro sem inversão no zoom: as palavras recortadas vêm com o papel branco em volta;
-                // fundo branco evita "caixinhas" brancas sobre o preto
-                s.theme.isDark && r != null -> Color.WHITE
-                else -> s.theme.background
-            },
-        )
+        canvas.drawColor(if (s.theme.isDark && s.pdfInvert) Color.BLACK else s.theme.background)
         if (page !in 0 until pageCount) return
-        val paint = pagePaint(s)
-        if (r != null) drawReflowed(r[page], canvas, marks, zoom, panX, panY, s, paint)
-        else drawFixed(page, canvas, marks, zoom, panX, panY, s, paint)
+        drawFixed(page, canvas, marks, zoom, panX, panY, s, pagePaint(s))
     }
 
     /**
@@ -216,7 +134,7 @@ class PdfContent(context: Context, uri: Uri, private val dataDir: File, private 
         if (paint.colorFilter != null) {
             // fotos ficam com as cores reais no escuro (só texto e desenhos são invertidos)
             val tmp = Rect()
-            for (img in figuresOf(page).images) {
+            for (img in imagesOf(page)) {
                 val d = RectF(dst.left + img.left * dst.width(), dst.top + img.top * dst.height(),
                     dst.left + img.right * dst.width(), dst.top + img.bottom * dst.height())
                 d.roundOut(tmp)
@@ -234,104 +152,11 @@ class PdfContent(context: Context, uri: Uri, private val dataDir: File, private 
         }
     }
 
-    private fun drawReflowed(sub: PdfReflow.SubPage, canvas: Canvas, marks: List<Mark>, zoom: Float, panX: Float, panY: Float, s: LayoutSettings, paint: Paint) {
-        val fit = fitRect(sub.pdfPage, s)
-        val baseW = fit.width() * s.pdfZoom
-        val baseH = fit.height() * s.pdfZoom
-        // resolução da página de origem acompanha o zoom de pinça, com teto de memória
-        var mult = (Math.round(zoom * 2) / 2f).coerceIn(1f, 3f)
-        val maxPixels = 18_000_000f
-        if (baseW * mult * baseH * mult > maxPixels) mult = sqrt(maxPixels / (baseW * baseH)).coerceAtLeast(0.5f)
-        val src = sourceBitmap(sub.pdfPage, (baseW * mult).toInt(), (baseH * mult).toInt())
-        canvas.save()
-        canvas.translate(panX, panY)
-        canvas.scale(zoom, zoom)
-        val images = if (paint.colorFilter != null) figuresOf(sub.pdfPage).images else emptyList()
-        val part = RectF()
-        for (f in sub.figures) {
-            blit(canvas, src, f.src, f.dst, paint)
-            // fotos dentro da figura: redesenhadas sem inverter
-            for (img in images) {
-                if (!part.setIntersect(img, f.src)) continue
-                val kx = f.dst.width() / f.src.width().coerceAtLeast(1e-6f)
-                val ky = f.dst.height() / f.src.height().coerceAtLeast(1e-6f)
-                blit(canvas, src, part, RectF(
-                    f.dst.left + (part.left - f.src.left) * kx, f.dst.top + (part.top - f.src.top) * ky,
-                    f.dst.left + (part.right - f.src.left) * kx, f.dst.top + (part.bottom - f.src.top) * ky,
-                ), PHOTO)
-            }
-        }
-        for (p in sub.pieces) {
-            // folga para acentos, descendentes e itálico que passam da caixa estimada
-            val padY = p.src.height() * 0.2f
-            // folga lateral pequena: maior que isso pegava um pedaço da letra vizinha ("chama.-se")
-            val padX = p.src.height() * 0.05f
-            val kx = p.dst.width() / p.src.width().coerceAtLeast(1e-6f)
-            val ky = p.dst.height() / p.src.height().coerceAtLeast(1e-6f)
-            blit(
-                canvas, src,
-                RectF(p.src.left - padX, p.src.top - padY, p.src.right + padX, p.src.bottom + padY * 0.5f),
-                RectF(p.dst.left - padX * kx, p.dst.top - padY * ky, p.dst.right + padX * kx, p.dst.bottom + padY * 0.5f * ky),
-                paint,
-            )
-        }
-        val hl = Paint(Paint.ANTI_ALIAS_FLAG)
-        for (mark in marks) {
-            hl.color = mark.color
-            rectsReflowed(sub, mark.start, mark.end).forEach { canvas.drawRect(it, hl) }
-        }
-        canvas.restore()
-    }
-
-    /**
-     * Copia a região normalizada [srcN] (0..1) da página para [dst]. A origem é recortada aos limites
-     * da página e o destino acompanha o recorte: a folga das palavras na borda não estica nem desloca nada.
-     */
-    private fun blit(canvas: Canvas, src: Bitmap, srcN: RectF, dst: RectF, paint: Paint) {
-        val l = srcN.left.coerceAtLeast(0f)
-        val t = srcN.top.coerceAtLeast(0f)
-        val r = srcN.right.coerceAtMost(1f)
-        val b = srcN.bottom.coerceAtMost(1f)
-        if (r <= l || b <= t) return
-        val kx = dst.width() / srcN.width().coerceAtLeast(1e-6f)
-        val ky = dst.height() / srcN.height().coerceAtLeast(1e-6f)
-        val sw = src.width
-        val sh = src.height
-        val sr = Rect((l * sw).toInt(), (t * sh).toInt(), (r * sw).toInt().coerceAtMost(sw), (b * sh).toInt().coerceAtMost(sh))
-        if (sr.isEmpty) return
-        // destino calculado a partir dos pixels inteiros da origem (sem meio-pixel de deslize)
-        val dr = RectF(
-            dst.left + (sr.left / sw.toFloat() - srcN.left) * kx, dst.top + (sr.top / sh.toFloat() - srcN.top) * ky,
-            dst.left + (sr.right / sw.toFloat() - srcN.left) * kx, dst.top + (sr.bottom / sh.toFloat() - srcN.top) * ky,
-        )
-        canvas.drawBitmap(src, sr, dr, paint)
-    }
-
-    /** Página do PDF renderizada inteira numa escala; reaproveitada entre subpáginas da mesma página. */
-    private fun sourceBitmap(page: Int, w: Int, h: Int): Bitmap {
-        val key = "$page@${w}x$h"
-        source?.takeIf { sourceKey == key }?.let { return it }
-        source?.recycle()
-        val bmp = Bitmap.createBitmap(w.coerceAtLeast(1), h.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
-        bmp.eraseColor(Color.WHITE)
-        val (pw, ph) = pageSize(page)
-        val m = Matrix().apply { setScale(w.toFloat() / pw, h.toFloat() / ph) }
-        renderer.openPage(page).use { it.render(bmp, null, m, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY) }
-        source = bmp
-        sourceKey = key
-        return bmp
-    }
-
     // ---------------- Texto sob o dedo e retângulos ----------------
 
     @Synchronized
     override fun charAt(page: Int, x: Float, y: Float): Locator? {
         val s = settings ?: return null
-        val r = reflow
-        return if (r != null) charAtReflowed(r.getOrNull(page) ?: return null, x, y) else charAtFixed(page, x, y, s)
-    }
-
-    private fun charAtFixed(page: Int, x: Float, y: Float, s: LayoutSettings): Locator? {
         val t = pageText(page)
         if (t.length == 0) return null
         val r = fitRect(page, s)
@@ -351,25 +176,10 @@ class PdfContent(context: Context, uri: Uri, private val dataDir: File, private 
         return if (best >= 0 && bestDist < 0.004f) Locator(page, best) else null
     }
 
-    private fun charAtReflowed(sub: PdfReflow.SubPage, x: Float, y: Float): Locator? {
-        val t = pageText(sub.pdfPage)
-        val piece = sub.pieces.firstOrNull { it.dst.left - 6 <= x && x <= it.dst.right + 6 && it.dst.top - 8 <= y && y <= it.dst.bottom + 8 }
-            ?: sub.pieces.filter { y >= it.dst.top - 12 && y <= it.dst.bottom + 12 }
-                .minByOrNull { minOf(kotlin.math.abs(it.dst.left - x), kotlin.math.abs(it.dst.right - x)) }
-            ?: return null
-        val k = piece.dst.width() / piece.src.width().coerceAtLeast(1e-6f)
-        for (i in piece.start until piece.end) {
-            val right = piece.dst.left + (t.right(i) - piece.src.left) * k
-            if (x <= right) return Locator(sub.pdfPage, i)
-        }
-        return Locator(sub.pdfPage, maxOf(piece.start, piece.end - 1))
-    }
-
     @Synchronized
     override fun rects(page: Int, start: Locator, end: Locator): List<RectF> {
         val s = settings ?: return emptyList()
-        val r = reflow
-        return if (r != null) rectsReflowed(r.getOrNull(page) ?: return emptyList(), start, end) else rectsFixed(page, start, end, s)
+        return rectsFixed(page, start, end, s)
     }
 
     private fun rectsFixed(page: Int, start: Locator, end: Locator, s: LayoutSettings): List<RectF> {
@@ -401,46 +211,14 @@ class PdfContent(context: Context, uri: Uri, private val dataDir: File, private 
         return out
     }
 
-    private fun rectsReflowed(sub: PdfReflow.SubPage, start: Locator, end: Locator): List<RectF> {
-        if (start.section > sub.pdfPage || end.section < sub.pdfPage) return emptyList()
-        val t = pageText(sub.pdfPage)
-        val a = if (start.section < sub.pdfPage) 0 else start.offset
-        val b = if (end.section > sub.pdfPage) Int.MAX_VALUE else end.offset
-        val out = ArrayList<RectF>()
-        for (p in sub.pieces) {
-            val from = maxOf(a, p.start)
-            val to = minOf(b, p.end)
-            if (from >= to) continue
-            val k = p.dst.width() / p.src.width().coerceAtLeast(1e-6f)
-            val rect = RectF(
-                p.dst.left + (t.left(from) - p.src.left) * k, p.dst.top,
-                p.dst.left + (t.right(to - 1) - p.src.left) * k, p.dst.bottom,
-            )
-            val last = out.lastOrNull()
-            // palavras vizinhas na mesma linha viram um retângulo contínuo
-            if (last != null && kotlin.math.abs(last.centerY() - rect.centerY()) < rect.height() * 0.5f && rect.left - last.right < rect.height()) {
-                last.union(rect)
-            } else {
-                out += rect
-            }
-        }
-        return out
-    }
-
     @Synchronized
     override fun close() {
         runCatching { renderer.close() }
         runCatching { fd.close() }
         scratch?.recycle(); scratch = null
-        source?.recycle(); source = null
     }
 
     private companion object {
-        /** Paginação do zoom: um núcleo livre para a interface. */
-        val POOL: java.util.concurrent.ExecutorService = java.util.concurrent.Executors.newFixedThreadPool(
-            (Runtime.getRuntime().availableProcessors() - 1).coerceIn(2, 6),
-        ) { r -> Thread(r, "pdf-reflow").apply { isDaemon = true } }
-
         /** Fotos no tema escuro: cores reais, só um pouco escurecidas para não ofuscar. */
         val PHOTO = Paint(Paint.FILTER_BITMAP_FLAG).apply {
             colorFilter = ColorMatrixColorFilter(ColorMatrix().apply { setScale(0.88f, 0.88f, 0.88f, 1f) })

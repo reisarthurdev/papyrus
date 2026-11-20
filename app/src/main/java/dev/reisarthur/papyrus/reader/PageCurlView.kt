@@ -116,6 +116,14 @@ class PageCurlView(context: Context) : View(context) {
     private var zoomLastY = 0f
     private var zoomMoved = false
     private var zoomGestureHandled = false
+    /**
+     * Arrasto além da borda da página ampliada (px; negativo = puxando para a esquerda).
+     * Se o gesto começou com a página encostada nessa borda e puxou o bastante, vira a página.
+     */
+    private var edgePull = 0f
+    private var startedAtLeftEdge = false
+    private var startedAtRightEdge = false
+    private var edgeAnimator: ValueAnimator? = null
     val isZoomed get() = zoom > 1.01f
 
     private val scaleDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
@@ -154,6 +162,7 @@ class PageCurlView(context: Context) : View(context) {
     fun resetZoom() {
         val was = isZoomed
         zoom = 1f; panX = 0f; panY = 0f
+        edgeAnimator?.cancel(); edgePull = 0f
         sharp = null
         sharpRequest++
         if (was) listener?.onZoomChanged(false)
@@ -185,12 +194,17 @@ class PageCurlView(context: Context) : View(context) {
                 downX = e.x; downY = e.y
                 zoomMoved = false
                 zoomGestureHandled = false
+                edgeAnimator?.cancel(); edgePull = 0f
+                // só vira a página quem JÁ estava encostado na borda ao tocar: chegar na borda
+                // no meio do arrasto apenas para ali (evita virar sem querer)
+                startedAtLeftEdge = panX >= -1f
+                startedAtRightEdge = panX <= width - width * zoom + 1f
             }
             MotionEvent.ACTION_MOVE -> {
                 if (zoomGestureHandled) return true
                 if (!zoomMoved && (abs(e.x - downX) > slop || abs(e.y - downY) > slop)) zoomMoved = true
                 if (zoomMoved) {
-                    panX += e.x - zoomLastX
+                    panHorizontally(e.x - zoomLastX)
                     panY += e.y - zoomLastY
                     clampPan()
                     invalidate()
@@ -198,6 +212,14 @@ class PageCurlView(context: Context) : View(context) {
                 zoomLastX = e.x; zoomLastY = e.y
             }
             MotionEvent.ACTION_UP -> {
+                if (abs(edgePull) > width * EDGE_TURN_FRACTION && !zoomGestureHandled) {
+                    // puxou a página ampliada para fora da borda: vira (e volta ao tamanho normal)
+                    val next = edgePull < 0
+                    resetZoom()
+                    if (next) turnNext() else turnPrev()
+                    return true
+                }
+                if (edgePull != 0f) releaseEdgePull()
                 if (zoomMoved) requestSharp()
                 else if (!zoomGestureHandled && listener?.onTap(e.x, e.y) != true) {
                     // tocar nas bordas ainda vira a página (e volta ao tamanho normal)
@@ -209,6 +231,33 @@ class PageCurlView(context: Context) : View(context) {
             }
         }
         return true
+    }
+
+    /**
+     * Move a página ampliada na horizontal. O que sobra depois de encostar na borda vira
+     * [edgePull] (se o gesto começou ali); voltar o dedo desfaz o puxão antes de mover a página.
+     */
+    private fun panHorizontally(dx: Float) {
+        var move = dx
+        if (edgePull != 0f) {
+            val pull = edgePull + move
+            if (pull * edgePull <= 0f) { move = pull; edgePull = 0f } else { edgePull = pull; move = 0f }
+        }
+        val wanted = panX + move
+        panX = wanted.coerceIn(width - width * zoom, 0f)
+        val rest = wanted - panX
+        if ((rest < 0 && startedAtRightEdge) || (rest > 0 && startedAtLeftEdge)) edgePull += rest
+    }
+
+    /** Soltou sem puxar o bastante: a página volta para a borda. */
+    private fun releaseEdgePull() {
+        edgeAnimator?.cancel()
+        edgeAnimator = ValueAnimator.ofFloat(edgePull, 0f).apply {
+            duration = 180
+            interpolator = DecelerateInterpolator()
+            addUpdateListener { edgePull = it.animatedValue as Float; invalidate() }
+            start()
+        }
     }
 
     // ---------------- API pública ----------------
@@ -258,13 +307,16 @@ class PageCurlView(context: Context) : View(context) {
                 canvas.drawBitmap(base, 0f, 0f, bitmapPaint)
                 return
             }
-            // ampliada: a página normal esticada aparece na hora; a versão nítida cobre por cima
+            // ampliada: a página normal esticada aparece na hora; a versão nítida cobre por cima.
+            // puxando além da borda, a página anda só um pouco (resistência) e o fundo aparece
+            val shift = edgePull * 0.35f
+            if (shift != 0f) canvas.drawColor(p.paperColor)
             zoomMatrix.setScale(zoom, zoom)
-            zoomMatrix.postTranslate(panX, panY)
+            zoomMatrix.postTranslate(panX + shift, panY)
             canvas.drawBitmap(base, zoomMatrix, bitmapPaint)
             val sh = sharp
             if (sh != null && sharpPage == currentPage && abs(sharpZoom - zoom) < 0.001f) {
-                canvas.drawBitmap(sh, panX - sharpPanX, panY - sharpPanY, bitmapPaint)
+                canvas.drawBitmap(sh, panX - sharpPanX + shift, panY - sharpPanY, bitmapPaint)
             }
             return
         }
@@ -617,5 +669,7 @@ class PageCurlView(context: Context) : View(context) {
 
     private companion object {
         const val MAX_ZOOM = 3f
+        /** Quanto (fração da largura) puxar além da borda, com zoom, para virar a página. */
+        private const val EDGE_TURN_FRACTION = 0.18f
     }
 }

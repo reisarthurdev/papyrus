@@ -175,7 +175,7 @@ class EpubContent(private val dir: File) : BookContent {
 
     /** Só o que muda a quebra de páginas do EPUB (tema e zoom do PDF não entram). */
     private fun epubKey(s: LayoutSettings) =
-        s.copy(pdfZoom = 1f, theme = ReaderTheme.LIGHT, pdfInvert = false).paginationKey() + "|f4"
+        s.copy(theme = ReaderTheme.LIGHT, pdfInvert = false).paginationKey() + "|f4"
 
     private fun cacheFile(key: String) = File(dir, "pages_${Integer.toHexString(key.hashCode())}.cache")
 

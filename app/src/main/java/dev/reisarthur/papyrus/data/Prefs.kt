@@ -50,10 +50,6 @@ object Prefs {
             ?.takeIf { it.size == 4 }?.toIntArray()
         set(v) = sp.edit().putString("readerGeometry", v?.joinToString(",")).apply()
 
-    var pdfZoom: Float
-        get() = sp.getFloat("pdfZoom", 1f).coerceIn(1f, 3f) // 300% é o máximo (versões antigas iam a 400%)
-        set(v) = sp.edit().putFloat("pdfZoom", v).apply()
-
     var lastHighlightColor: Int
         get() = sp.getInt("hlColor", 0)
         set(v) = sp.edit().putInt("hlColor", v).apply()

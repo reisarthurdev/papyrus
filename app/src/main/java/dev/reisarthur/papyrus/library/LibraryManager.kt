@@ -14,9 +14,7 @@ import dev.reisarthur.papyrus.epub.EpubImporter
 import dev.reisarthur.papyrus.pdf.PdfImporter
 import dev.reisarthur.papyrus.util.Bg
 import dev.reisarthur.papyrus.util.TextUtil
-import dev.reisarthur.papyrus.reader.BookContent
 import dev.reisarthur.papyrus.reader.EpubContent
-import dev.reisarthur.papyrus.reader.PdfContent
 import dev.reisarthur.papyrus.reader.readerSettings
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
@@ -144,13 +142,12 @@ object LibraryManager {
     private fun prepaginate(context: Context, id: Long) {
         val g = Prefs.readerGeometry ?: return
         val book = Database.instance.book(id)?.takeIf { it.status == BookStatus.READY } ?: return
-        if (book.format == BookFormat.PDF && Prefs.pdfZoom <= 1.01f) return // página inteira: nada a paginar
+        if (book.format == BookFormat.PDF) return // PDF mostra a página inteira: nada a paginar
         notify("Preparando ${book.title} para leitura…", listChanged = false)
         runCatching {
             val settings = readerSettings(context, book.format, g[0], g[1], g[2], g[3])
             val dir = BookFiles.dir(context.filesDir, id)
-            val content: BookContent = if (book.format == BookFormat.EPUB) EpubContent(dir)
-            else PdfContent(context, Uri.parse(book.uri), dir, TocIO.load(BookFiles.toc(context.filesDir, id)))
+            val content = EpubContent(dir)
             try { content.layout(settings) } finally { content.close() }
         }.onFailure { android.util.Log.w("papyrus", "Pré-paginação falhou", it) }
     }
