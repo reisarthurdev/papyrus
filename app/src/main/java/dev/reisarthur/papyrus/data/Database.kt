@@ -129,6 +129,7 @@ class Database private constructor(context: Context) :
 
     fun deleteBook(id: Long) {
         writableDatabase.delete("books", "id = ?", arrayOf(id.toString()))
+        Prefs.forgetBook(id)
     }
 
     private fun update(id: Long, values: ContentValues) {

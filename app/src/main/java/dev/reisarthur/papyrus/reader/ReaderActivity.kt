@@ -116,6 +116,7 @@ class ReaderActivity : Activity(),
         super.onCreate(savedInstanceState)
         val id = intent.getLongExtra(EXTRA_BOOK_ID, -1)
         book = db.book(id) ?: run { finish(); return }
+        Prefs.openBookId = book.id // a partir daqui Prefs.theme é o tema DESTE livro
         if (Build.VERSION.SDK_INT >= 28) {
             // usa a área do notch também (o texto respeita a área segura via insets)
             window.attributes = window.attributes.apply {
@@ -902,6 +903,7 @@ class ReaderActivity : Activity(),
 
     override fun onDestroy() {
         super.onDestroy()
+        if (::book.isInitialized && Prefs.openBookId == book.id) Prefs.openBookId = -1
         popup?.dismiss()
         content?.close()
     }

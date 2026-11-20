@@ -17,9 +17,27 @@ object Prefs {
         get() = sp.getString("tree", null)
         set(v) = sp.edit().putString("tree", v).apply()
 
+    /** Livro aberto no leitor agora (-1 = nenhum). O tema é lembrado por livro. */
+    var openBookId: Long = -1
+
+    /**
+     * Tema do livro aberto: cada livro lembra o seu (um pode ficar claro e outro escuro).
+     * Livro que nunca teve tema escolhido usa o último tema escolhido em qualquer livro.
+     */
     var theme: ReaderTheme
-        get() = ReaderTheme.entries.getOrElse(sp.getInt("theme", ReaderTheme.DARK.ordinal)) { ReaderTheme.DARK }
-        set(v) = sp.edit().putInt("theme", v.ordinal).apply()
+        get() {
+            val default = sp.getInt("theme", ReaderTheme.DARK.ordinal)
+            val ordinal = if (openBookId < 0) default else sp.getInt("theme_$openBookId", default)
+            return ReaderTheme.entries.getOrElse(ordinal) { ReaderTheme.DARK }
+        }
+        set(v) {
+            val e = sp.edit().putInt("theme", v.ordinal)
+            if (openBookId >= 0) e.putInt("theme_$openBookId", v.ordinal)
+            e.apply()
+        }
+
+    /** Livro excluído: esquece o tema dele. */
+    fun forgetBook(id: Long) = sp.edit().remove("theme_$id").apply()
 
     /** Tamanho da fonte do EPUB em sp. */
     var fontSize: Float
