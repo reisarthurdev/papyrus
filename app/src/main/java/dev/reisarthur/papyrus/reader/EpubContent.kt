@@ -486,16 +486,18 @@ class EpubContent(private val dir: File) : BookContent {
         var spaces = 0
         for (i in start until end) if (text[i] == ' ') spaces++
         if (spaces == 0) return 0f
-        val startX = layout.getPrimaryHorizontal(start)
-        val available = layout.getParagraphRight(line) - startX
-        // largura natural (sem o esticamento). Atenção: a posição do fim exato da linha é tratada
-        // pelo Android como início da linha SEGUINTE; em linha que termina sem espaço (hifenizada,
-        // ou com hífen do texto) mede-se até o último caractere e soma a largura dele
-        val endX = if (end < lineEnd) layout.getPrimaryHorizontal(end)
-        else layout.getPrimaryHorizontal(end - 1) + Layout.getDesiredWidth(text, end - 1, end, layout.paint)
-        val natural = endX - startX + hyphenWidth(layout, line)
-        // se o próprio Android já devolveu a posição justificada (outras versões), não soma de novo
+        // largura disponível = a mesma que o Android usa para esticar a linha (descontado o recuo
+        // DESTA linha); largura natural medida direto no texto, com os estilos (itálico etc.).
+        // Medir pelas posições do layout falhava em linhas que terminam sem espaço (a posição do
+        // fim da linha é tratada como início da seguinte) e em parágrafos com recuo.
+        val available = layout.getParagraphRight(line) - layout.getParagraphLeft(line)
+        val natural = Layout.getDesiredWidth(text, start, end, layout.paint) + hyphenWidth(layout, line)
         if (natural >= available - 1f) return 0f
+        // se esta versão do Android já devolve posições esticadas, não soma de novo: compara o
+        // que o layout diz da linha (até o último caractere) com a medida natural do mesmo trecho
+        val layoutSpan = layout.getPrimaryHorizontal(end - 1) - layout.getPrimaryHorizontal(start)
+        val naturalSpan = Layout.getDesiredWidth(text, start, end - 1, layout.paint)
+        if (layoutSpan - naturalSpan > spaces.toFloat()) return 0f
         return (available - natural) / spaces
     }
 
