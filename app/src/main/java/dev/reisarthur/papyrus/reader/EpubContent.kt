@@ -488,7 +488,12 @@ class EpubContent(private val dir: File) : BookContent {
         if (spaces == 0) return 0f
         val startX = layout.getPrimaryHorizontal(start)
         val available = layout.getParagraphRight(line) - startX
-        val natural = layout.getPrimaryHorizontal(end) - startX + hyphenWidth(layout, line)
+        // largura natural (sem o esticamento). Atenção: a posição do fim exato da linha é tratada
+        // pelo Android como início da linha SEGUINTE; em linha que termina sem espaço (hifenizada,
+        // ou com hífen do texto) mede-se até o último caractere e soma a largura dele
+        val endX = if (end < lineEnd) layout.getPrimaryHorizontal(end)
+        else layout.getPrimaryHorizontal(end - 1) + Layout.getDesiredWidth(text, end - 1, end, layout.paint)
+        val natural = endX - startX + hyphenWidth(layout, line)
         // se o próprio Android já devolveu a posição justificada (outras versões), não soma de novo
         if (natural >= available - 1f) return 0f
         return (available - natural) / spaces
