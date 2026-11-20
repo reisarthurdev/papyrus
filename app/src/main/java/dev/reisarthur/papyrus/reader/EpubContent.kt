@@ -486,35 +486,19 @@ class EpubContent(private val dir: File) : BookContent {
         var spaces = 0
         for (i in start until end) if (text[i] == ' ') spaces++
         if (spaces == 0) return 0f
-        // largura disponível = a mesma que o Android usa para esticar a linha (descontado o recuo
-        // DESTA linha); largura natural medida direto no texto, com os estilos (itálico etc.).
-        // Medir pelas posições do layout falhava em linhas que terminam sem espaço (a posição do
-        // fim da linha é tratada como início da seguinte) e em parágrafos com recuo.
-        val available = layout.getParagraphRight(line) - layout.getParagraphLeft(line)
-        val natural = Layout.getDesiredWidth(text, start, end, layout.paint) + hyphenWidth(layout, line)
+        // larguras pelas posições do layout (que vêm SEM o esticamento). Duas armadilhas:
+        // - a posição do fim exato da linha é tratada como início da linha seguinte: em linha que
+        //   termina sem espaço (hifenizada ou com hífen do texto) mede até o último caractere e
+        //   soma a largura dele;
+        // - Layout.getDesiredWidth soma o recuo do parágrafo: não serve aqui.
+        val startX = layout.getPrimaryHorizontal(start)
+        val endX = if (end < lineEnd) layout.getPrimaryHorizontal(end)
+        else layout.getPrimaryHorizontal(end - 1) + layout.paint.measureText(text, end - 1, end)
+        val available = layout.getParagraphRight(line) - startX
+        val natural = endX - startX + hyphenWidth(layout, line)
+        // se esta versão do Android já devolve posições esticadas, a linha já "ocupa" tudo
         if (natural >= available - 1f) return 0f
-        // se esta versão do Android já devolve posições esticadas, não soma de novo: compara o
-        // que o layout diz da linha (até o último caractere) com a medida natural do mesmo trecho
-        val layoutSpan = layout.getPrimaryHorizontal(end - 1) - layout.getPrimaryHorizontal(start)
-        val naturalSpan = Layout.getDesiredWidth(text, start, end - 1, layout.paint)
-        if (layoutSpan - naturalSpan > spaces.toFloat()) return 0f
         return (available - natural) / spaces
-    }
-
-    /** Só para testes: números da justificação de cada linha da página. */
-    @Synchronized
-    internal fun debugJustify(page: Int): String {
-        val s = settings ?: return ""
-        val r = renderFor(page, s) ?: return ""
-        val l = r.layout
-        return (r.firstLine until r.endLine).joinToString("\n") { line ->
-            val a = l.getLineStart(line); val b = l.getLineEnd(line)
-            var e = b; while (e > a && l.text[e - 1].isWhitespace()) e--
-            val t = l.text.subSequence(a, b).toString().replace("\n", "⏎")
-            "L$line [$t] x0=${l.getPrimaryHorizontal(a)} xLast=${if (e > a) l.getPrimaryHorizontal(e - 1) else 0f} " +
-                "pl=${l.getParagraphLeft(line)} pr=${l.getParagraphRight(line)} lr=${l.getLineRight(line)} lmax=${l.getLineMax(line)} " +
-                "lw=${l.getLineWidth(line)} desired=${Layout.getDesiredWidth(l.text, a, e, l.paint)} extra=${justifyExtra(l, line)}"
-        }
     }
 
     /**
