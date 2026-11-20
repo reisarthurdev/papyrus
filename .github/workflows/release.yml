@@ -33,12 +33,24 @@ jobs:
           echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
           echo "PAPYRUS_KEYSTORE_FILE=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
 
+      # o Android simulado dos testes (Robolectric) é baixado do Maven na primeira vez:
+      # guardado em cache para não depender da rede a cada build
+      - uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/org/robolectric
+          key: robolectric-${{ hashFiles('app/build.gradle.kts') }}
+
       # pdfbox extraindo texto e fotos de um PDF, seleção de EPUB conferida contra as letras
       # desenhadas e o dicionário: se algo quebrar, o APK não é publicado
       - name: Testes
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon testReleaseUnitTest -Pandroid.useAndroidX=true -PbuildNumber=${{ github.run_number }}
+          # uma segunda tentativa se a primeira falhar (download instável do Maven)
+          for t in 1 2; do
+            ./gradlew --no-daemon testReleaseUnitTest -Pandroid.useAndroidX=true -PbuildNumber=${{ github.run_number }} && exit 0
+            echo "Testes falharam (tentativa $t)"; sleep 20
+          done
+          exit 1
 
       - name: Compilar APK de release
         if: github.ref == 'refs/heads/main'
