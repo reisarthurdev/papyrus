@@ -501,6 +501,22 @@ class EpubContent(private val dir: File) : BookContent {
         return (available - natural) / spaces
     }
 
+    /** Só para testes: números da justificação de cada linha da página. */
+    @Synchronized
+    internal fun debugJustify(page: Int): String {
+        val s = settings ?: return ""
+        val r = renderFor(page, s) ?: return ""
+        val l = r.layout
+        return (r.firstLine until r.endLine).joinToString("\n") { line ->
+            val a = l.getLineStart(line); val b = l.getLineEnd(line)
+            var e = b; while (e > a && l.text[e - 1].isWhitespace()) e--
+            val t = l.text.subSequence(a, b).toString().replace("\n", "⏎")
+            "L$line [$t] x0=${l.getPrimaryHorizontal(a)} xLast=${if (e > a) l.getPrimaryHorizontal(e - 1) else 0f} " +
+                "pl=${l.getParagraphLeft(line)} pr=${l.getParagraphRight(line)} lr=${l.getLineRight(line)} lmax=${l.getLineMax(line)} " +
+                "lw=${l.getLineWidth(line)} desired=${Layout.getDesiredWidth(l.text, a, e, l.paint)} extra=${justifyExtra(l, line)}"
+        }
+    }
+
     /**
      * Hífen automático no fim da linha: ocupa largura, mas não existe no texto. A linha termina
      * no meio de uma palavra (letra antes e depois da quebra) só quando o Android hifenizou.
