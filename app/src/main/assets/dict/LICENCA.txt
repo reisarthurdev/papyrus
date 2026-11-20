@@ -1,0 +1,6 @@
+Dicionário Aberto
+https://dicionario-aberto.net
+Baseado no Novo Diccionário da Língua Portuguesa (Cândido de Figueiredo, 1913),
+revisto e modernizado por Alberto Simões e colaboradores.
+Licença: Creative Commons Atribuição-CompartilhaIgual (CC BY-SA).
+Dados originais: https://github.com/ambs/Dicionario-Aberto

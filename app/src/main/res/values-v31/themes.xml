@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Android 12+: tema do sistema com cores dinâmicas (Material You) para os componentes nativos. -->
+    <style name="AppTheme" parent="android:Theme.DeviceDefault.Light.NoActionBar">
+        <item name="android:colorPrimary">@android:color/system_accent1_600</item>
+        <item name="android:colorAccent">@android:color/system_accent1_600</item>
+        <item name="android:windowBackground">@android:color/system_neutral1_10</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+    <style name="ReaderTheme" parent="AppTheme">
+        <item name="android:windowBackground">#000000</item>
+    </style>
+</resources>

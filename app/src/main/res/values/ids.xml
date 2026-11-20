@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Tag da capa na lista: id do livro que a linha está mostrando. -->
+    <item name="cover_book" type="id" />
+</resources>

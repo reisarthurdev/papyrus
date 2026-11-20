@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Menu que abre para baixo cresce a partir do botão (canto de cima). -->
+<set xmlns:android="http://schemas.android.com/apk/res/android"
+    android:duration="180"
+    android:interpolator="@android:interpolator/decelerate_cubic">
+    <scale android:fromXScale="0.85" android:toXScale="1" android:fromYScale="0.7" android:toYScale="1"
+        android:pivotX="100%" android:pivotY="0%" />
+    <alpha android:fromAlpha="0" android:toAlpha="1" />
+</set>

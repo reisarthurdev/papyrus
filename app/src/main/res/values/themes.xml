@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="AppTheme" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:colorPrimary">#A83F31</item>
+        <item name="android:colorAccent">#A83F31</item>
+        <item name="android:windowBackground">#FFF8F6</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+    <!-- Sem janela provisória: o leitor só aparece já com o fundo do tema escolhido (nada de tela preta no tema claro). -->
+    <style name="ReaderTheme" parent="AppTheme">
+        <item name="android:windowDisablePreview">true</item>
+    </style>
+    <!-- Diálogos de tela cheia (busca, sumário) entram e saem deslizando pela direita. -->
+    <style name="SlideWindow">
+        <item name="android:windowEnterAnimation">@anim/slide_in_right</item>
+        <item name="android:windowExitAnimation">@anim/slide_out_right</item>
+    </style>
+    <style name="MenuUp">
+        <item name="android:windowEnterAnimation">@anim/menu_enter_up</item>
+        <item name="android:windowExitAnimation">@anim/popup_exit</item>
+    </style>
+    <style name="MenuDown">
+        <item name="android:windowEnterAnimation">@anim/menu_enter_down</item>
+        <item name="android:windowExitAnimation">@anim/popup_exit</item>
+    </style>
+    <style name="PopupGrow">
+        <item name="android:windowEnterAnimation">@anim/popup_enter</item>
+        <item name="android:windowExitAnimation">@anim/popup_exit</item>
+    </style>
+    <!-- Painel inferior: sobe ao abrir e desce ao fechar. -->
+    <style name="SheetWindow">
+        <item name="android:windowEnterAnimation">@anim/sheet_in</item>
+        <item name="android:windowExitAnimation">@anim/sheet_out</item>
+    </style>
+</resources>
