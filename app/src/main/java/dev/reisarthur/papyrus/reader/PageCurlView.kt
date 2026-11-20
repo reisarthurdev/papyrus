@@ -242,16 +242,70 @@ class PageCurlView(context: Context) : View(context) {
                 }
                 if (edgePull != 0f) releaseEdgePull()
                 if (zoomMoved) { requestSharp(); listener?.onViewportChanged(settled = true) }
-                else if (!zoomGestureHandled && listener?.onTap(e.x, e.y) != true) {
-                    // tocar nas bordas ainda vira a página (e volta ao tamanho normal)
-                    when {
-                        e.x > width * 0.8f -> { resetZoom(); turnNext() }
-                        e.x < width * 0.2f -> { resetZoom(); turnPrev() }
-                    }
-                }
+                else if (!zoomGestureHandled) onZoomedTap(e.x, e.y)
             }
         }
         return true
+    }
+
+    // ---------------- Toque e toque duplo com zoom ----------------
+
+    private val doubleTapTimeout = ViewConfiguration.getDoubleTapTimeout().toLong()
+    private var lastTapTime = 0L
+    private var lastTapX = 0f
+    private var lastTapY = 0f
+    private var pendingTap: Runnable? = null
+
+    /**
+     * Toque com a página ampliada. Dois toques seguidos voltam ao tamanho normal; por isso o toque
+     * simples (mostrar as barras, virar pelas bordas) espera o tempo de um toque duplo antes de agir.
+     */
+    private fun onZoomedTap(x: Float, y: Float) {
+        val now = android.os.SystemClock.uptimeMillis()
+        val isDouble = now - lastTapTime < doubleTapTimeout && hypot(x - lastTapX, y - lastTapY) < slop * 4
+        pendingTap?.let(::removeCallbacks)
+        pendingTap = null
+        if (isDouble) {
+            lastTapTime = 0L
+            animateZoomOut()
+            return
+        }
+        lastTapTime = now; lastTapX = x; lastTapY = y
+        pendingTap = Runnable {
+            pendingTap = null
+            if (!isZoomed || listener?.onTap(x, y) == true) return@Runnable
+            // tocar nas bordas ainda vira a página (e volta ao tamanho normal)
+            when {
+                x > width * 0.8f -> { resetZoom(); turnNext() }
+                x < width * 0.2f -> { resetZoom(); turnPrev() }
+            }
+        }.also { postDelayed(it, doubleTapTimeout) }
+    }
+
+    /** Volta ao tamanho normal com uma animação curta (o zoom "encolhe" de onde estava). */
+    private fun animateZoomOut() {
+        val z0 = zoom; val x0 = panX; val y0 = panY
+        sharp = null
+        sharpRequest++
+        ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 220
+            interpolator = DecelerateInterpolator()
+            addUpdateListener {
+                val t = it.animatedValue as Float
+                zoom = z0 + (1f - z0) * t
+                panX = x0 * (1f - t)
+                panY = y0 * (1f - t)
+                listener?.onViewportChanged(settled = false)
+                invalidate()
+            }
+            addListener(object : android.animation.AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: android.animation.Animator) {
+                    zoom = 1.02f // garante que resetZoom avise que saiu do zoom
+                    resetZoom()
+                }
+            })
+            start()
+        }
     }
 
     /**
