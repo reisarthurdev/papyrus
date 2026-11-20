@@ -97,3 +97,11 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.14.1")
 }
+
+// nos testes, mostra a saída e o erro completo no log do GitHub Actions
+tasks.withType<Test>().configureEach {
+    testLogging {
+        events("failed", "standard_out")
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+    }
+}
