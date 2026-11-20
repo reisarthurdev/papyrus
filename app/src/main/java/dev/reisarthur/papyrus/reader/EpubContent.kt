@@ -493,9 +493,16 @@ class EpubContent(private val dir: File) : BookContent {
         return (available - natural) / spaces
     }
 
-    /** Hífen automático no fim da linha: ocupa largura, mas não existe no texto. */
-    private fun hyphenWidth(layout: Layout, line: Int): Float =
-        if (android.os.Build.VERSION.SDK_INT >= 29 && layout.getEndHyphenEdit(line) != 0) layout.paint.measureText("-") else 0f
+    /**
+     * Hífen automático no fim da linha: ocupa largura, mas não existe no texto. A linha termina
+     * no meio de uma palavra (letra antes e depois da quebra) só quando o Android hifenizou.
+     */
+    private fun hyphenWidth(layout: Layout, line: Int): Float {
+        val end = layout.getLineEnd(line)
+        val text = layout.text
+        val split = end in 1 until text.length && text[end - 1].isLetter() && text[end].isLetter()
+        return if (split) layout.paint.measureText("-") else 0f
+    }
 
     /** Índice do caractere sob o ponto [x] da linha, considerando a justificação. */
     private fun charIndexAt(layout: Layout, line: Int, x: Float): Int {
