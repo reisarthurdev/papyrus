@@ -53,7 +53,9 @@ class EpubSelectionTest {
             val start = content.pageStart(page)
             val end = content.pageEnd(page)
             val text = content.sectionText(start.section)
-            Regex("[\\p{L}]{4,}").findAll(text.substring(start.offset, end.offset)).forEach { m ->
+            // palavras soltas (entre espaços): em "Trata-se" a tinta do hífen emenda na palavra e
+            // confundiria a medição
+            Regex("(?<=\\s)\\p{L}{4,}(?=\\s)").findAll(text.substring(start.offset, end.offset)).forEach { m ->
                 val a = start.offset + m.range.first
                 val rects = content.rects(page, Locator(start.section, a), Locator(start.section, a + m.value.length))
                 if (rects.size != 1) return@forEach // palavra hifenizada entre linhas: fora deste teste

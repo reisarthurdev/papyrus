@@ -33,23 +33,12 @@ jobs:
           echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
           echo "PAPYRUS_KEYSTORE_FILE=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
 
-      # o pdfbox de verdade extraindo texto e fotos de um PDF de exemplo: se a importação
-      # quebrar, o APK não é publicado
-      - name: Testes (extração de texto dos PDFs)
-        env:
-          PAPYRUS_DEBUG_DIR: /tmp/papyrus-debug
+      # pdfbox extraindo texto e fotos de um PDF, seleção de EPUB conferida contra as letras
+      # desenhadas e o dicionário: se algo quebrar, o APK não é publicado
+      - name: Testes
         run: |
           chmod +x gradlew
           ./gradlew --no-daemon testReleaseUnitTest -Pandroid.useAndroidX=true -PbuildNumber=${{ github.run_number }}
-
-      - name: Imagens de diagnóstico
-        if: always() && github.ref != 'refs/heads/main'
-        run: |
-          [ -d /tmp/papyrus-debug ] || exit 0
-          cd /tmp/papyrus-debug
-          git init -q && git checkout -q -b diag-out
-          git add -A && git -c user.name=ci -c user.email=ci@local commit -qm imagens
-          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" diag-out
 
       - name: Compilar APK de release
         if: github.ref == 'refs/heads/main'
