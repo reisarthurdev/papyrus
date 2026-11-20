@@ -83,11 +83,14 @@ class LibraryActivity : Activity(), LibraryManager.Listener {
         setContentView(buildViews())
         loadDictionaryFooter()
         LibraryManager.addListener(this)
+        // importação que já estava rodando (app reaberto no meio dela): mostra o progresso atual
+        showStatus(LibraryManager.status)
         if (Prefs.libraryTreeUri != null) LibraryManager.scan(this)
     }
 
     override fun onResume() {
         super.onResume()
+        showStatus(LibraryManager.status)
         reload()
     }
 
@@ -96,9 +99,9 @@ class LibraryActivity : Activity(), LibraryManager.Listener {
         LibraryManager.removeListener(this)
     }
 
-    override fun onLibraryChanged(status: String?) {
+    override fun onLibraryChanged(status: String?, listChanged: Boolean) {
         showStatus(status)
-        reload()
+        if (listChanged) reload()
     }
 
     private fun reload() {

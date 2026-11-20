@@ -138,28 +138,15 @@ class ReaderActivity : Activity(),
     // Carregamento e paginação
     // =====================================================================
 
-    private fun currentSettings(): LayoutSettings {
-        val dm = resources.displayMetrics
-        return LayoutSettings(
-            width = root.width,
-            height = root.height,
-            density = dm.density,
-            fontPx = android.util.TypedValue.applyDimension(android.util.TypedValue.COMPLEX_UNIT_SP, Prefs.fontSize, dm),
-            lineSpacing = Prefs.lineSpacing,
-            marginPx = dp(Prefs.margin),
-            justify = true, // todo livro é justificado
-            theme = Prefs.theme,
-            pdfInvert = Prefs.pdfDarkInvert,
-            pdfZoom = if (book.format == BookFormat.PDF) Prefs.pdfZoom else 1f,
-            insetTop = insetTop,
-            insetBottom = insetBottom,
-        )
-    }
+    private fun currentSettings(): LayoutSettings =
+        readerSettings(this, book.format, root.width, root.height, insetTop, insetBottom)
 
     private fun load() {
         if (root.width == 0) { root.post { load() }; return }
         showLoading("Abrindo livro…")
         val s = currentSettings()
+        // guarda o tamanho da tela: os próximos livros importados já chegam paginados para ele
+        Prefs.readerGeometry = intArrayOf(s.width, s.height, s.insetTop, s.insetBottom)
         val dir = BookFiles.dir(filesDir, book.id)
         Bg.load({
             val c: BookContent = if (book.format == BookFormat.EPUB) {

@@ -14,10 +14,12 @@ import dev.reisarthur.papyrus.epub.EpubImporter
 import dev.reisarthur.papyrus.pdf.PdfImporter
 import dev.reisarthur.papyrus.util.Bg
 import dev.reisarthur.papyrus.util.TextUtil
+import dev.reisarthur.papyrus.reader.BookContent
+import dev.reisarthur.papyrus.reader.EpubContent
+import dev.reisarthur.papyrus.reader.PdfContent
+import dev.reisarthur.papyrus.reader.readerSettings
 import java.io.File
-import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Varre a pasta escolhida (via SAF), sincroniza com o banco e importa o que for novo.
@@ -25,7 +27,8 @@ import java.util.concurrent.atomic.AtomicInteger
  */
 object LibraryManager {
 
-    fun interface Listener { fun onLibraryChanged(status: String?) }
+    /** [listChanged] = false: só o texto de progresso mudou (a lista não precisa ser relida). */
+    fun interface Listener { fun onLibraryChanged(status: String?, listChanged: Boolean) }
 
     private val listeners = LinkedHashSet<Listener>()
     private val running = AtomicBoolean(false)
@@ -35,9 +38,9 @@ object LibraryManager {
     fun addListener(l: Listener) { listeners += l }
     fun removeListener(l: Listener) { listeners -= l }
 
-    private fun notify(newStatus: String?) {
+    private fun notify(newStatus: String?, listChanged: Boolean = true) {
         status = newStatus
-        Bg.main { listeners.toList().forEach { it.onLibraryChanged(newStatus) } }
+        Bg.main { listeners.toList().forEach { it.onLibraryChanged(newStatus, listChanged) } }
     }
 
     private val PLACEHOLDER_TITLE = Regex("import_\\d+")
@@ -104,40 +107,52 @@ object LibraryManager {
     }
 
     /**
-     * Importa vários livros ao mesmo tempo. Quantos em paralelo depende do aparelho
-     * ([importThreads]); cada livro continua sendo importado inteiro por uma única thread.
+     * Importa um livro por vez, e cada PDF divide as páginas entre [importThreads] threads.
+     * Dá a mesma velocidade total de vários livros em paralelo, mas cada livro fica pronto antes,
+     * usa metade da memória e nunca passa de 2 threads (mais que isso travava a interface).
      */
     private fun importAll(context: Context, toImport: List<Pair<Long, FoundFile>>) {
         if (toImport.isEmpty()) return
         val progress = ImportProgress(toImport.size, toImport.singleOrNull()?.second?.name)
         notify(progress.label())
         val threads = importThreads(context)
-        val started = AtomicInteger(0)
-        val pool = Executors.newFixedThreadPool(threads.coerceAtMost(toImport.size)) { r ->
-            // um pouco abaixo do normal: a interface tem prioridade, mas a importação não vai para
-            // o grupo "background" do Android (que roda nos núcleos lentos e deixava tudo lento)
-            Thread {
-                android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_DEFAULT + 4)
-                r.run()
-            }.apply { name = "papyrus-import" }
-        }
+        // a varredura já roda em segundo plano: a fila é processada aqui mesmo, em ordem
+        val previous = android.os.Process.getThreadPriority(android.os.Process.myTid())
+        // um pouco abaixo do normal: a interface tem prioridade, mas a importação não vai para os
+        // núcleos lentos (prioridade "background"), o que a deixava muito mais lenta
+        android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_DEFAULT + 4)
         try {
-            toImport.mapIndexed { i, (id, file) ->
-                pool.submit {
-                    // as threads livres ajudam no PDF: com muitos livros na fila cada um usa 1;
-                    // no fim da fila (ou com um livro só) o PDF divide as páginas entre várias
-                    val remaining = toImport.size - started.getAndIncrement()
-                    val parallelism = (threads / remaining.coerceIn(1, threads)).coerceAtLeast(1)
-                    importBook(context, id, file.uri, file.name, parallelism) { done, total ->
-                        if (progress.update(i, done, total)) notify(progress.label())
-                    }
-                    progress.finish(i)
-                    notify(progress.label()) // a lista atualiza e o livro pronto já aparece com a capa
+            toImport.forEachIndexed { i, (id, file) ->
+                importBook(context, id, file.uri, file.name, threads) { done, total ->
+                    // progresso só troca o texto da barra: a lista não é relida a cada 1%
+                    if (progress.update(i, done, total)) notify(progress.label(), listChanged = false)
                 }
-            }.forEach { it.get() }
+                progress.finish(i)
+                notify(progress.label()) // a lista atualiza e o livro pronto já aparece com a capa
+                prepaginate(context, id)
+            }
         } finally {
-            pool.shutdown()
+            android.os.Process.setThreadPriority(previous)
         }
+    }
+
+    /**
+     * Deixa o livro recém-importado paginado para a tela e as preferências atuais (o resultado fica
+     * no cache em disco do próprio livro). Assim, ao abrir, ele aparece na hora.
+     * Só roda se algum livro já foi aberto antes (é quando se conhece o tamanho da tela).
+     */
+    private fun prepaginate(context: Context, id: Long) {
+        val g = Prefs.readerGeometry ?: return
+        val book = Database.instance.book(id)?.takeIf { it.status == BookStatus.READY } ?: return
+        if (book.format == BookFormat.PDF && Prefs.pdfZoom <= 1.01f) return // página inteira: nada a paginar
+        notify("Preparando ${book.title} para leitura…", listChanged = false)
+        runCatching {
+            val settings = readerSettings(context, book.format, g[0], g[1], g[2], g[3])
+            val dir = BookFiles.dir(context.filesDir, id)
+            val content: BookContent = if (book.format == BookFormat.EPUB) EpubContent(dir)
+            else PdfContent(context, Uri.parse(book.uri), dir, TocIO.load(BookFiles.toc(context.filesDir, id)))
+            try { content.layout(settings) } finally { content.close() }
+        }.onFailure { android.util.Log.w("papyrus", "Pré-paginação falhou", it) }
     }
 
     /** Progresso somado de vários livros importando ao mesmo tempo (cada livro pesa igual). */
@@ -171,15 +186,10 @@ object LibraryManager {
         else "Importando livros · $finished de $count · ${percent()}%"
     }
 
-    /**
-     * Threads de importação: metade dos núcleos, de 1 a 3. Aparelho com pouca memória fica
-     * com no máximo 2, porque PDFs grandes no pdfbox pesam bastante.
-     */
+    /** Threads por importação: 2 (1 em aparelho com pouca memória, onde o pdfbox pesa demais). */
     private fun importThreads(context: Context): Int {
-        val cores = Runtime.getRuntime().availableProcessors()
         val am = context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
-        val max = if (am.isLowRamDevice || am.memoryClass < 256) 2 else 3
-        return (cores / 2).coerceIn(1, max)
+        return if (am.isLowRamDevice || Runtime.getRuntime().availableProcessors() < 4) 1 else 2
     }
 
     /** Importa (ou reimporta) um livro. Roda na thread atual. */
@@ -217,10 +227,12 @@ object LibraryManager {
         notify("Reimportando ${book.fileName} · 0%")
         Bg.io {
             var last = -1
-            importBook(context.applicationContext, id, Uri.parse(book.uri), book.fileName, importThreads(context)) { done, total ->
+            val app = context.applicationContext
+            importBook(app, id, Uri.parse(book.uri), book.fileName, importThreads(app)) { done, total ->
                 val p = if (total > 0) done * 100 / total else 0
-                if (p != last) { last = p; notify("Reimportando ${book.fileName} · $p%") }
+                if (p != last) { last = p; notify("Reimportando ${book.fileName} · $p%", listChanged = false) }
             }
+            prepaginate(app, id)
             notify(null)
         }
     }

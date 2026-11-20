@@ -41,6 +41,15 @@ object Prefs {
         set(v) = sp.edit().putBoolean("pdfInvert", v).apply()
 
     /** Zoom consolidado do PDF: 1.0, 1.25, 1.5, 1.75 ou 2.0. */
+    /**
+     * Tamanho da área de leitura na última vez que um livro foi aberto (largura, altura, recortes
+     * de cima e de baixo). Com isso a importação já deixa o livro paginado: abrir fica instantâneo.
+     */
+    var readerGeometry: IntArray?
+        get() = sp.getString("readerGeometry", null)?.split(',')?.mapNotNull { it.toIntOrNull() }
+            ?.takeIf { it.size == 4 }?.toIntArray()
+        set(v) = sp.edit().putString("readerGeometry", v?.joinToString(",")).apply()
+
     var pdfZoom: Float
         get() = sp.getFloat("pdfZoom", 1f).coerceIn(1f, 3f) // 300% é o máximo (versões antigas iam a 400%)
         set(v) = sp.edit().putFloat("pdfZoom", v).apply()

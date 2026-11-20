@@ -4,6 +4,7 @@ import android.graphics.Canvas
 import android.graphics.RectF
 import dev.reisarthur.papyrus.data.Locator
 import dev.reisarthur.papyrus.ui.ReaderTheme
+import dev.reisarthur.papyrus.ui.dp
 
 /** Tudo que muda a paginação ou a aparência das páginas. */
 data class LayoutSettings(
@@ -24,6 +25,32 @@ data class LayoutSettings(
 ) {
     /** Só o que afeta a quebra de páginas (tema não entra: trocar cor não repagina). */
     fun paginationKey() = "v3|$width|$height|$fontPx|$lineSpacing|$marginPx|$justify|$insetTop|$insetBottom|$pdfZoom"
+}
+
+/**
+ * Configuração de leitura atual (preferências + tamanho da tela). Usada pelo leitor e pela
+ * pré-paginação feita logo após importar, para as duas gerarem exatamente a mesma chave de cache.
+ */
+fun readerSettings(
+    context: android.content.Context, format: dev.reisarthur.papyrus.data.BookFormat,
+    width: Int, height: Int, insetTop: Int, insetBottom: Int,
+): LayoutSettings {
+    val dm = context.resources.displayMetrics
+    val prefs = dev.reisarthur.papyrus.data.Prefs
+    return LayoutSettings(
+        width = width,
+        height = height,
+        density = dm.density,
+        fontPx = android.util.TypedValue.applyDimension(android.util.TypedValue.COMPLEX_UNIT_SP, prefs.fontSize, dm),
+        lineSpacing = prefs.lineSpacing,
+        marginPx = context.dp(prefs.margin), // igual ao leitor: a chave do cache precisa bater
+        justify = true, // todo livro é justificado
+        theme = prefs.theme,
+        pdfInvert = prefs.pdfDarkInvert,
+        pdfZoom = if (format == dev.reisarthur.papyrus.data.BookFormat.PDF) prefs.pdfZoom else 1f,
+        insetTop = insetTop,
+        insetBottom = insetBottom,
+    )
 }
 
 /** Um trecho destacado a desenhar na página. */
