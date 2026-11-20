@@ -11,7 +11,6 @@ import com.tom_roush.pdfbox.cos.COSName
 import com.tom_roush.pdfbox.io.MemoryUsageSetting
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.PDPage
-import com.tom_roush.pdfbox.pdmodel.graphics.image.PDImageXObject
 import com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlineNode
 import com.tom_roush.pdfbox.text.PDFTextStripper
 import com.tom_roush.pdfbox.text.TextPosition
@@ -39,7 +38,7 @@ class PdfImporter(private val pdfFile: File, private val outDir: File, private v
          * Livros importados sem texto antes da extração ficar mais tolerante a falhas não têm esta
          * marca: são reimportados uma vez para tentar recuperar a seleção, as notas e a busca.
          */
-        const val TEXT_RETRY_MARKER = "pdf.textretry"
+        const val TEXT_RETRY_MARKER = "pdf.textretry2"
         /** Motivo da falha ao extrair o texto (só existe quando falhou). */
         const val ERROR_FILE = "import_error.txt"
 
@@ -208,12 +207,28 @@ class PdfImporter(private val pdfFile: File, private val outDir: File, private v
             val list = images
             if (list != null && op.name == "Do") {
                 val name = operands.firstOrNull() as? COSName
-                val xobject = name?.let { runCatching { resources?.getXObject(it) }.getOrNull() }
-                if (xobject is PDImageXObject) {
+                // isImageXObject só olha o tipo no dicionário. getXObject DECODIFICAVA a imagem
+                // inteira (cada foto do livro, só para saber que era foto): lento e, em livros
+                // cheios de fotos, estourava a memória e a importação perdia o texto todo
+                if (name != null && runCatching { resources?.isImageXObject(name) == true }.getOrDefault(false)) {
                     PdfFigures.imageRect(graphicsState.currentTransformationMatrix, cropLeft, cropTop, pageW, pageH)?.let { list += it }
                 }
             }
             super.processOperator(op, operands)
+        }
+
+        /**
+         * Uma página com conteúdo problemático (fonte quebrada, imagem corrompida) fica sem texto,
+         * mas não derruba a extração do livro inteiro. As páginas puladas viram páginas vazias.
+         */
+        override fun processPage(page: PDPage) {
+            try {
+                super.processPage(page)
+            } catch (e: java.io.IOException) {
+                android.util.Log.w("papyrus", "Página ${currentPageNo} sem texto", e)
+            } catch (e: RuntimeException) {
+                android.util.Log.w("papyrus", "Página ${currentPageNo} sem texto", e)
+            }
         }
 
         override fun writeString(text: String, textPositions: MutableList<TextPosition>) {

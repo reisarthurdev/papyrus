@@ -36,6 +36,11 @@ class PdfImporterTest {
         assertTrue(page.text.contains("Introdução à Física 1"))
         // caixa da primeira letra dentro da página e com altura
         assertTrue(page.bottom(0) > page.top(0) && page.left(0) in 0f..1f)
+        // a foto da página foi registrada (sem decodificar a imagem) na posição certa
+        val photos = PdfFigures.load(out)[0].images
+        println("fotos da página 1: $photos")
+        assertEquals(1, photos.size)
+        assertTrue(photos[0].left in 0.10f..0.14f && photos[0].bottom in 0.82f..0.88f)
     }
 
     @Test fun extraiTextoSequencial() = extract(1)
