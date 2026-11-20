@@ -4,8 +4,6 @@ import android.content.Context
 import android.util.LruCache
 import dev.reisarthur.papyrus.util.TextUtil
 import java.io.DataInputStream
-import java.nio.ByteBuffer
-import java.nio.channels.FileChannel
 import java.util.zip.Inflater
 
 /**
@@ -21,8 +19,8 @@ import java.util.zip.Inflater
  */
 class BundledDictionary private constructor(context: Context) {
 
-    private val channel: FileChannel
-    private val baseOffset: Long
+    /** Leitor de trechos do arquivo: posição -> bytes. */
+    private val reader: (Long, Int) -> ByteArray
     private val zdict: ByteArray
     private val firstKeys: Array<String>
     private val offsets: IntArray
@@ -31,9 +29,7 @@ class BundledDictionary private constructor(context: Context) {
     private val blockCache = LruCache<Int, List<Pair<String, String>>>(8)
 
     init {
-        val afd = context.assets.openFd(ASSET)
-        channel = afd.createInputStream().channel
-        baseOffset = afd.startOffset
+        reader = openReader(context)
         DataInputStream(context.assets.open(ASSET).buffered()).use { h ->
             check(h.readInt() == MAGIC) { "dicionário embutido inválido" }
             zdict = ByteArray(h.readInt()).also { h.readFully(it) }
@@ -81,16 +77,10 @@ class BundledDictionary private constructor(context: Context) {
     private fun block(i: Int): List<Pair<String, String>> = blockCache.get(i) ?: readBlock(i).also { blockCache.put(i, it) }
 
     private fun readBlock(i: Int): List<Pair<String, String>> {
-        val packed = ByteBuffer.allocate(sizes[i])
-        var pos = baseOffset + offsets[i]
-        while (packed.hasRemaining()) {
-            val n = channel.read(packed, pos)
-            if (n < 0) break
-            pos += n
-        }
+        val packed = reader(offsets[i].toLong(), sizes[i])
         val inflater = Inflater()
         try {
-            inflater.setInput(packed.array(), 0, packed.position())
+            inflater.setInput(packed)
             val out = java.io.ByteArrayOutputStream(sizes[i] * 4)
             val buf = ByteArray(32 * 1024)
             while (!inflater.finished()) {
@@ -109,6 +99,33 @@ class BundledDictionary private constructor(context: Context) {
             }.toList()
         } finally {
             inflater.end()
+        }
+    }
+
+    /**
+     * Lê trechos do asset por posição. O jeito rápido é o descritor do próprio APK com pread
+     * (posição absoluta = início do asset no APK + posição no arquivo).
+     *
+     * Antes era usado o FileChannel do stream do asset: no Android 14+ esse canal já soma o início
+     * do asset sozinho, então a posição saía somada duas vezes e toda consulta falhava.
+     * Se o asset não puder ser aberto como descritor (APK comprimido), carrega tudo na memória.
+     */
+    private fun openReader(context: Context): (Long, Int) -> ByteArray {
+        val afd = runCatching { context.assets.openFd(ASSET) }.getOrNull()
+            ?: return context.assets.open(ASSET).use { it.readBytes() }.let { all -> { pos, len -> all.copyOfRange(pos.toInt(), pos.toInt() + len) } }
+        val fd = afd.fileDescriptor
+        val start = afd.startOffset
+        return { pos, len ->
+            // o lambda guarda o afd vivo: se ele fosse coletado, o descritor seria fechado
+            check(afd.length < 0 || pos + len <= afd.length) { "trecho fora do dicionário" }
+            val out = ByteArray(len)
+            var done = 0
+            while (done < len) {
+                val n = android.system.Os.pread(fd, out, done, len - done, start + pos + done)
+                if (n <= 0) error("fim inesperado do dicionário")
+                done += n
+            }
+            out
         }
     }
 

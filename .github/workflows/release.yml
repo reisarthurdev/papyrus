@@ -38,7 +38,7 @@ jobs:
       - name: Testes (extração de texto dos PDFs)
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon testReleaseUnitTest -Pandroid.useAndroidX=true -PbuildNumber=${{ github.run_number }}
+          ./gradlew --no-daemon testReleaseUnitTest -Pandroid.useAndroidX=true -PbuildNumber=${{ github.run_number }} -i 2>&1 | grep -E "pior diferença|->|FAILED|PASSED|Exception|at dev\.|BUILD" | head -80; test ${PIPESTATUS[0]} -eq 0
 
       - name: Compilar APK de release
         if: github.ref == 'refs/heads/main'
